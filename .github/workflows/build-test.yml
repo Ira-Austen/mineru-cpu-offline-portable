@@ -1,0 +1,113 @@
+name: 构建并测试 MinerU CPU 离线包
+on:
+  push:
+    branches: [main]
+    paths: ['app/**', 'tests/**', '*.py', '*.ps1', '*.json', '*.lock', '.github/workflows/**']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: portable-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+      - name: 复用 GGUF（缓存键独立于 MinerU 版本）
+        uses: actions/cache@v4
+        with:
+          path: input-models
+          key: gguf-${{ hashFiles('gguf-models.json') }}
+      - name: 复用 ONNX（更新程序不会使模型缓存失效）
+        uses: actions/cache@v4
+        with:
+          path: work/shared-models
+          key: onnx-${{ hashFiles('onnx-models.json') }}
+      - name: 下载缺失模型并校验 GGUF
+        shell: pwsh
+        run: uv run --no-project --python 3.12 download_gguf.py --dest input-models
+      - name: 构建六个离线包及单元测试
+        shell: pwsh
+        run: ./build.ps1 -GgufDirectory ./input-models
+      - name: 校验压缩包与文件清单
+        shell: pwsh
+        run: uv run --no-project --python 3.12 verify_archives.py --output output
+      - name: 解压至中文空格路径，测试官方 WebUI 与 CPU OCR
+        shell: pwsh
+        run: |
+          Expand-Archive output/MinerU-Windows-x64-Full.zip 'extracted/中文 空格'
+          $bundle = Join-Path $PWD 'extracted/中文 空格/MinerU-Windows-x64-Full'
+          & "$bundle/runtime/python/python.exe" tests/smoke_portable.py "$bundle" --advanced --output output/windows-full-test.json
+          if ($LASTEXITCODE -ne 0) { throw 'Windows 完整包测试失败' }
+          Expand-Archive output/MinerU-Windows-x64-Runtime.zip extracted
+          $runtime = Join-Path $PWD 'extracted/MinerU-Windows-x64-Runtime'
+          & "$runtime/runtime/python/python.exe" tests/smoke_portable.py "$runtime" --gguf-dir "$bundle/models/GGUF" --onnx-dir "$bundle/models/MinerU-4_models_onnx" --output output/windows-external-models-test.json
+          if ($LASTEXITCODE -ne 0) { throw 'Windows 外部模型测试失败' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mineru-windows
+          path: output/MinerU-Windows-*.zip
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mineru-linux
+          path: output/MinerU-UOS20-*.tar.gz
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-and-windows-reports
+          path: |
+            output/*.json
+            output/SHA256SUMS.txt
+          retention-days: 14
+      - name: 失败时上传诊断日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-failure-logs
+          path: extracted/**/data/**/*.log
+          if-no-files-found: ignore
+  linux-check:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: mineru-linux
+          path: output
+      - name: glibc 2.28 普通用户、禁网、只读模型测试
+        run: |
+          mkdir -p 'extracted/中文 空格' reports
+          tar -xzf output/MinerU-UOS20-x64-Full.tar.gz -C 'extracted/中文 空格'
+          tar -xzf output/MinerU-UOS20-x64-Runtime.tar.gz -C extracted
+          chmod -R a+rwX extracted reports
+          chmod -R a-w 'extracted/中文 空格/MinerU-UOS20-x64-Full/models'
+          docker run --rm --network none --user 1000:1000 -v "$PWD/extracted:/app" -v "$PWD/tests:/tests:ro" -v "$PWD/reports:/reports" debian:buster bash -c '
+            full="/app/中文 空格/MinerU-UOS20-x64-Full"
+            export LD_LIBRARY_PATH="$full/runtime/python/lib:$full/lib"
+            "$full/runtime/python/bin/python3.12" /tests/smoke_portable.py "$full" --advanced --output /reports/linux-full-test.json
+          '
+          docker run --rm --network none --user 1000:1000 -v "$PWD/extracted:/app" -v "$PWD/tests:/tests:ro" -v "$PWD/reports:/reports" debian:buster bash -c '
+            runtime="/app/MinerU-UOS20-x64-Runtime"
+            full="/app/中文 空格/MinerU-UOS20-x64-Full"
+            export LD_LIBRARY_PATH="$runtime/runtime/python/lib:$runtime/lib"
+            "$runtime/runtime/python/bin/python3.12" /tests/smoke_portable.py "$runtime" --gguf-dir "$full/models/GGUF" --onnx-dir "$full/models/MinerU-4_models_onnx" --output /reports/linux-external-models-test.json
+          '
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-test-reports
+          path: |
+            reports/*.json
+            extracted/**/data/**/*.log
+          if-no-files-found: ignore
+          retention-days: 14

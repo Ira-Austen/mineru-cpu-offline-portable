@@ -1,0 +1,3 @@
+# 固定已核实支持 CPU GGUF 的 MinerU 版本；其余依赖由构建锁文件固定。
+mineru==4.0.12
+mineru-llama-cpp==0.1.3

@@ -1,0 +1,8 @@
+{
+  "gguf": "",
+  "mmproj": "",
+  "onnx_dir": "",
+  "threads": 4,
+  "context": 8192,
+  "open_browser": true
+}
