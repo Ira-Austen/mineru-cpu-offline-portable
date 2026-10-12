@@ -1,4 +1,4 @@
-"""输出四个具有校验清单的可移动离线压缩包。"""
+"""输出具有校验清单的可移动离线压缩包。"""
 import argparse
 import gzip
 import hashlib
@@ -28,15 +28,27 @@ def sha256(path):
 
 def included(path, stage, platform):
     rel = path.relative_to(stage)
+    if not path.is_file():
+        return False
     if rel.parts[0] == 'data' or any(part in ('__pycache__', '.cache', '.locks', '.git') for part in rel.parts):
         return False
-    if path.suffix == '.pyc' or rel.as_posix() in ('settings.json', 'manifest.json'):
+    if path.suffix in ('.pyc', '.pyo') or rel.as_posix() in ('settings.json', 'manifest.json'):
         return False
     if platform == 'windows' and path.name == 'start.sh':
         return False
     if platform == 'linux' and path.name == 'Start.cmd':
         return False
-    return path.is_file()
+    # 过滤 Python 自带测试集、无用图形 demo 与 man 手册
+    parts = set(rel.parts)
+    if any(p in parts for p in ('tests', 'test', 'idlelib', 'turtledemo')) and 'mineru' not in parts:
+        if rel.parts[0] == 'runtime' or any(part.endswith('.dist-info') for part in rel.parts) or 'packages' in rel.parts:
+            return False
+    if 'share' in parts and any(p in parts for p in ('man', 'doc', 'gtk-doc')):
+        return False
+    # 过滤 packages/bin 中的无用 CLI 独立可执行二进制（如 magika 独立工具，运行仅需 Python 模块）
+    if len(rel.parts) >= 3 and rel.parts[0] == 'packages' and rel.parts[1] == 'bin':
+        return False
+    return True
 
 
 def build(platform):
@@ -69,15 +81,15 @@ def build(platform):
         }
         if platform == 'windows':
             archive = output / (name + '.zip')
-            with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=1, allowZip64=True) as zip:
+            with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED, compresslevel=6, allowZip64=True) as zip_file:
                 for path, rel in entries:
-                    zip.write(path, f'{name}/{rel}')
+                    zip_file.write(path, f'{name}/{rel}')
                 for rel, content in generated.items():
-                    zip.writestr(f'{name}/{rel}', content)
+                    zip_file.writestr(f'{name}/{rel}', content)
         else:
             import io
             archive = output / (name + '.tar.gz')
-            with archive.open('wb') as raw, gzip.GzipFile(fileobj=raw, mode='wb', compresslevel=1, mtime=0) as gz:
+            with archive.open('wb') as raw, gzip.GzipFile(fileobj=raw, mode='wb', compresslevel=6, mtime=0) as gz:
                 with tarfile.open(fileobj=gz, mode='w') as tar:
                     # Windows 构建时恢复 Linux 执行位；文件内容不改动。
                     for path, rel in entries:

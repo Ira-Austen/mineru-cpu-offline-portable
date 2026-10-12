@@ -33,7 +33,7 @@ cd MinerU-UOS20-x64-Full
 ./start.sh
 ```
 
-自定义版同理。若图形解压器未保留执行权限，先执行 `chmod u+x runtime/python/bin/python3.12 packages/mineru_llama_cpp/bin/llama-server`，再执行 `bash start.sh`。修改自己文件的权限不需要 root。无需 sudo、apt 或系统 Python。
+自定义版同理。启动脚本 `start.sh` 会自动检测并修复 `python3.12` 与 `llama-server` 的执行权限；若使用的特殊解压工具破坏了权限，脚本亦会自动处理，无需手动 chmod 或 root/sudo 权限。无需 apt 或系统 Python。
 
 UOS 模型路径例如 `/home/user/models/MinerU2.5-Pro-2605-1.2B-Q4_K_M.gguf`。完整版使用相对路径，所以可以搬到另一台机器或另一个目录。
 
@@ -76,7 +76,11 @@ pwsh -File ./build.ps1 -GgufDirectory 'E:/models/MinerU2.5-Pro-2605-1.2B-GGUF'
 
 Linux 测试在 Debian 10（glibc 2.28）容器内以 UID 1000、`--network none` 运行，模型目录只读。容器只用于 CI 验证，目标 UOS 不需要 Docker。这项测试不能替代兆芯 CPU 实机验证。
 
-Actions 下载位置：对应成功运行底部的 `mineru-windows`、`mineru-linux` 和测试报告 Artifacts。包保留 7 天，测试报告保留 14 天；工作流不自动发布 Release。
+构建产物与下载位置：
+- **GitHub Releases**：工作流在 Windows 实测与 Linux 容器实测全部通过后，会自动创建对应版本的 GitHub Release 并发布离线包与 SHA256 校验清单。
+  - 受 GitHub Releases 单文件 2 GiB 上限约束，Full 完整包通过内置分卷工具切分为 `.001`/`.002`（Windows）或 `.part1`/`.part2`（Linux），下载后可通过单行命令合并（Windows 亦可使用 7-Zip 直接右键解压）。
+  - Custom 与 Runtime 包均为单文件发布。
+- **Actions Artifacts**：运行底部的 `mineru-windows`、`mineru-linux` 亦保留整包 7 天，测试报告保留 14 天。
 
 ### 更新程序与模型复用
 

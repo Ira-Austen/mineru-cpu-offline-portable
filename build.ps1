@@ -49,7 +49,7 @@ foreach ($item in @(
 )) {
     $archive = Join-Path $WorkDirectory $item[1]
     if (-not (Test-Path -LiteralPath $archive)) {
-        Invoke-WebRequest -Uri ($debian + $item[0]) -OutFile $archive
+        Invoke-WebRequest -Uri ($debian + $item[0]) -OutFile $archive -MaximumRetryCount 3 -RetryIntervalSec 3
     }
 }
 Invoke-BuilderPython (Join-Path $PSScriptRoot 'assemble.py') --work $WorkDirectory --gguf-dir $GgufDirectory --onnx-dir $OnnxDirectory

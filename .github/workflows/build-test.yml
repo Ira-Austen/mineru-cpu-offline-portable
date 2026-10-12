@@ -2,10 +2,24 @@ name: 构建并测试 MinerU CPU 离线包
 on:
   push:
     branches: [main]
-    paths: ['app/**', 'tests/**', '*.py', '*.ps1', '*.json', '*.lock', '.github/workflows/**']
+    paths: ['app/**', 'tests/**', '*.py', '*.ps1', '*.json', '*.lock', '.github/workflows/**', 'README.md']
+    tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: '发布版本标签 (例如 v4.0.12，留空按默认)'
+        required: false
+        default: ''
+      draft:
+        description: '是否发布为草稿版本 (Draft)'
+        type: boolean
+        default: false
+      prerelease:
+        description: '是否标记为预发布版本 (Prerelease)'
+        type: boolean
+        default: false
 permissions:
-  contents: read
+  contents: write
 env:
   PYTHONUTF8: '1'
   PYTHONIOENCODING: utf-8
@@ -31,6 +45,19 @@ jobs:
         with:
           path: work/shared-models
           key: onnx-${{ hashFiles('onnx-models.json') }}
+      - name: 复用 uv 依赖与 Python 安装缓存（加速构建）
+        uses: actions/cache@v4
+        with:
+          path: work/uv-cache
+          key: uv-${{ runner.os }}-${{ hashFiles('requirements-*.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-
+      - name: 复用 Debian 基础库缓存
+        uses: actions/cache@v4
+        with:
+          path: |
+            work/*.deb
+          key: deb-pkgs-${{ hashFiles('build.ps1') }}
       - name: 下载缺失模型并校验 GGUF
         shell: pwsh
         run: uv run --no-project --python 3.12 download_gguf.py --dest input-models
@@ -114,3 +141,71 @@ jobs:
             extracted/**/data/**/*.log
           if-no-files-found: ignore
           retention-days: 14
+  release:
+    name: 自动发布至 GitHub Releases
+    needs: [build, linux-check]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: false
+      - name: 下载 Windows 离线包产物
+        uses: actions/download-artifact@v4
+        with:
+          name: mineru-windows
+          path: release-assets
+      - name: 下载 Linux 离线包产物
+        uses: actions/download-artifact@v4
+        with:
+          name: mineru-linux
+          path: release-assets
+      - name: 下载构建与测试报告
+        uses: actions/download-artifact@v4
+        with:
+          name: build-and-windows-reports
+          path: release-assets
+      - name: 下载 Linux 测试报告
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-test-reports
+          path: release-reports
+          if-no-files-found: ignore
+      - name: 准备 Release 产物（处理 >2GiB 分卷与生成发布说明）
+        run: |
+          uv run --no-project --python 3.12 prepare_release.py --assets-dir release-assets --reports-dir release-reports
+      - name: 确定 Release 标签与发布
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+          elif [ -n "${{ inputs.tag_name }}" ]; then
+            TAG="${{ inputs.tag_name }}"
+          else
+            TAG="v4.0.12"
+          fi
+
+          TITLE="MinerU CPU 离线便携包 $TAG"
+          FLAGS=()
+          if [ "${{ inputs.draft }}" = "true" ]; then
+            FLAGS+=("--draft")
+          fi
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            FLAGS+=("--prerelease")
+          fi
+
+          echo "发布目标标签: $TAG"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，更新说明并覆盖/上传资产..."
+            gh release edit "$TAG" --title "$TITLE" --notes-file release-assets/RELEASE_NOTES.md "${FLAGS[@]}"
+            gh release upload "$TAG" release-assets/dist/* --clobber
+          else
+            echo "创建新 Release $TAG 并上传资产..."
+            gh release create "$TAG" release-assets/dist/* \
+              --title "$TITLE" \
+              --notes-file release-assets/RELEASE_NOTES.md \
+              "${FLAGS[@]}"
+          fi
