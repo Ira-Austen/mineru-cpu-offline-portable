@@ -27,13 +27,22 @@ for platform, runtime_name in [('windows', 'cpython-3.12.13-windows-x86_64-none'
                     target / 'models' / 'MinerU-4_models_onnx', dirs_exist_ok=True)
     settings = {'gguf': '', 'mmproj': '', 'onnx_dir': '', 'threads': 6 if platform == 'windows' else 4,
                 'context': 8192, 'open_browser': True}
-    (target / 'settings.json').write_text(json.dumps(settings, indent=2), encoding='utf-8')
+    (target / 'settings.json').write_text(json.dumps(settings, indent=2), encoding='utf-8', newline='\n')
     packages = sorted(f'{d.metadata["Name"]}=={d.version}'
                       for d in importlib.metadata.distributions(path=[str(target / 'packages')]))
-    (source / f'requirements-{platform}.lock').write_text('\n'.join(packages) + '\n', encoding='utf-8')
+    (source / f'requirements-{platform}.lock').write_text('\n'.join(packages) + '\n', encoding='utf-8', newline='\n')
     shutil.copy2(source / f'requirements-{platform}.lock', target / 'requirements.lock')
     for name in ('README.md', 'SOURCES.md'):
         if (source / name).exists():
             shutil.copy2(source / name, target / name)
+    if platform == 'linux':
+        for item in target.rglob('*'):
+            if item.is_file() and (item.suffix in ('.sh', '.py', '.json', '.lock', '.md', '.txt', '.yml', '.yaml') or item.name in ('start.sh', 'requirements.lock', 'settings.json', 'manifest.json', 'linux-elf-audit.json')):
+                try:
+                    raw = item.read_bytes()
+                    if b'\r' in raw:
+                        item.write_bytes(raw.replace(b'\r\n', b'\n').replace(b'\r', b'\n'))
+                except Exception:
+                    pass
     print(f'组装完成：{target}', flush=True)
 print('模型来源：', args.gguf_dir)

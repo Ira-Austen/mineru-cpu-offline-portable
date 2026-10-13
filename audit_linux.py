@@ -57,7 +57,7 @@ for path in root.rglob('*'):
     if highest > (2, 28):
         bad.append(item)
 report = {'target': 'x86_64 glibc >= 2.28', 'elf_files': len(files), 'incompatible': bad, 'files': files}
-Path(args.output).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+Path(args.output).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8', newline='\n')
 print(json.dumps({'elf_files': len(files), 'incompatible': bad,
                   'dependencies': sorted({dep for file in files for dep in file['needed']})}, ensure_ascii=False))
 raise SystemExit(bool(bad))

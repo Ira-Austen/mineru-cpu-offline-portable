@@ -51,8 +51,22 @@ def included(path, stage, platform):
     return True
 
 
+def normalize_stage_line_endings(stage):
+    for item in stage.rglob('*'):
+        if item.is_file() and (item.suffix in ('.sh', '.py', '.json', '.lock', '.md', '.txt', '.yml', '.yaml')
+                               or item.name in ('start.sh', 'requirements.lock', 'settings.json', 'manifest.json', 'linux-elf-audit.json')):
+            try:
+                data = item.read_bytes()
+                if b'\r' in data:
+                    item.write_bytes(data.replace(b'\r\n', b'\n').replace(b'\r', b'\n'))
+            except Exception:
+                pass
+
+
 def build(platform):
     stage = work / 'stage' / platform
+    if platform == 'linux':
+        normalize_stage_line_endings(stage)
     payload = [(path, path.relative_to(stage).as_posix())
                for path in sorted(stage.rglob('*')) if included(path, stage, platform)]
     records = [{'path': rel, 'bytes': path.stat().st_size, 'sha256': sha256(path)} for path, rel in payload]
@@ -98,11 +112,14 @@ def build(platform):
                         info.uname = info.gname = ''
                         info.mode = 0o644
                         with path.open('rb') as file:
-                            magic = file.read(4)
+                            content = file.read()
+                            magic = content[:4]
                             if magic == b'\x7fELF' or path.suffix == '.sh' or '/bin/' in f'/{rel}':
                                 info.mode = 0o755
-                            file.seek(0)
-                            tar.addfile(info, file)
+                            if path.suffix == '.sh' or rel == 'start.sh':
+                                content = content.replace(b'\r\n', b'\n').replace(b'\r', b'\n')
+                            info.size = len(content)
+                            tar.addfile(info, io.BytesIO(content))
                     for rel, content in generated.items():
                         info = tarfile.TarInfo(f'{name}/{rel}')
                         info.size = len(content)
@@ -120,4 +137,4 @@ if __name__ == '__main__':
     with ThreadPoolExecutor(max_workers=2) as pool:
         archives = [path for group in pool.map(platform_build, ('windows', 'linux')) for path in group]
     checksums = '\n'.join(f'{sha256(path)}  {path.name}' for path in sorted(archives)) + '\n'
-    (output / 'SHA256SUMS.txt').write_text(checksums, encoding='utf-8')
+    (output / 'SHA256SUMS.txt').write_text(checksums, encoding='utf-8', newline='\n')

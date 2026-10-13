@@ -1,0 +1,29 @@
+# 强制跨平台换行符规范：所有脚本与代码文件在任意操作系统检出时均使用 LF 换行符
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.sh text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.lock text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# 纯二进制文件禁止任何换行符转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.gguf binary
+*.onnx binary
+*.deb binary
+*.zip binary
+*.tar.gz binary
+*.so binary
+*.so.* binary
+*.dll binary
+*.exe binary
+*.bin binary

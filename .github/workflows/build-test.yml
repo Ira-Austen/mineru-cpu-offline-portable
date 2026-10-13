@@ -123,6 +123,8 @@ jobs:
           chmod -R a-w 'extracted/中文 空格/MinerU-UOS20-x64-Full/models'
           docker run --rm --network none --user 1000:1000 -v "$PWD/extracted:/app" -v "$PWD/tests:/tests:ro" -v "$PWD/reports:/reports" debian:buster bash -c '
             full="/app/中文 空格/MinerU-UOS20-x64-Full"
+            cd "$full"
+            ./start.sh --check
             export LD_LIBRARY_PATH="$full/runtime/python/lib:$full/lib"
             "$full/runtime/python/bin/python3.12" /tests/smoke_portable.py "$full" --advanced --output /reports/linux-full-test.json
           '

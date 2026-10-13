@@ -34,6 +34,12 @@ def verify(path):
         if not is_zip:
             for name in ('start.sh', 'runtime/python/bin/python3.12', 'packages/mineru_llama_cpp/bin/llama-server'):
                 assert archive.getmember(root + '/' + name).mode & 0o111, name
+            for text_name in ('start.sh', 'launcher.py', 'entry.py', 'model_paths.py'):
+                stream = read(root + '/' + text_name)
+                assert stream is not None
+                with stream:
+                    script_data = stream.read()
+                    assert b'\r' not in script_data, f"{path.name} 中的 {text_name} 包含 CRLF 回车符 (\\r)！"
     return {'archive': path.name, 'files': len(manifest['files']), 'gguf': len(gguf), 'onnx': onnx, 'passed': True}
 
 
@@ -51,7 +57,7 @@ def main():
             assert digest(stream) == expected, name
         reports.append(verify(path))
         print(json.dumps(reports[-1]), flush=True)
-    (output / 'archive-verification.json').write_text(json.dumps(reports, indent=2), encoding='utf-8')
+    (output / 'archive-verification.json').write_text(json.dumps(reports, indent=2), encoding='utf-8', newline='\n')
 
 
 if __name__ == '__main__':
