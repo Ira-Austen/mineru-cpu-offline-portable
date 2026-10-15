@@ -11,6 +11,15 @@ if os.name == 'nt':
         if _path.is_dir():
             _dll_handles.append(os.add_dll_directory(str(_path)))
 
+# 延长 WebUI 客户端轮询等待 API 任务的最大超时时间（默认 24 小时），防止 20+ 页 PDF 处理中断
+try:
+    _raw_timeout = os.environ.get('MINERU_POLL_TIMEOUT', '86400')
+    _poll_timeout = max(int(_raw_timeout), 3600)
+    import mineru.parser.api_client as _api_client
+    _api_client._POLL_MAX_ATTEMPTS = _poll_timeout
+except Exception:
+    pass
+
 if os.environ.get('MINERU_PORTABLE_OFFLINE') == '1':
     _connect = socket.socket.connect
     _connect_ex = socket.socket.connect_ex

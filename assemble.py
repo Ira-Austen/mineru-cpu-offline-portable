@@ -26,7 +26,7 @@ for platform, runtime_name in [('windows', 'cpython-3.12.13-windows-x86_64-none'
     shutil.copytree(onnx,
                     target / 'models' / 'MinerU-4_models_onnx', dirs_exist_ok=True)
     settings = {'gguf': '', 'mmproj': '', 'onnx_dir': '', 'threads': 6 if platform == 'windows' else 4,
-                'context': 8192, 'open_browser': True}
+                'context': 8192, 'poll_timeout': 86400, 'open_browser': True}
     (target / 'settings.json').write_text(json.dumps(settings, indent=2), encoding='utf-8', newline='\n')
     packages = sorted(f'{d.metadata["Name"]}=={d.version}'
                       for d in importlib.metadata.distributions(path=[str(target / 'packages')]))

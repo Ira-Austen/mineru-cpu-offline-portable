@@ -126,6 +126,7 @@ def environment(settings):
         'MINERU_HOME': str(data / 'mineru'),
         'MINERU_MODEL_BASE_DIR': str(data / 'model-state'),
         'MINERU_PORTABLE_ONNX_DIR': str(onnx_directory(settings)),
+        'MINERU_POLL_TIMEOUT': str(settings.get('poll_timeout', 86400)),
         'MINERU_MODEL_SOURCE': 'local', 'MINERU_MODEL_SMALL_BACKEND': 'onnx',
         'MINERU_MODEL_VLM_ENGINE': 'llama-cpp', 'MINERU_TABLE_DEVICE': 'cpu',
         'MINERU_MODEL_VLM_SERVER_URL': 'http://127.0.0.1:30000',
@@ -265,6 +266,7 @@ PAGE = '''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="vi
 <label>ONNX 模型目录（留空使用包内模型）<input name="onnx_dir" value="{onnx_dir}" placeholder="含 Layout、OCR、MFR、Table 的模型目录"></label>
 <label>CPU 线程数（5600X 建议 6；兆芯先用 4）<input type="number" name="threads" min="1" max="64" value="{threads}"></label>
 <label>上下文长度（2605 配套模型建议 8192）<input type="number" name="context" min="4096" max="8192" step="1024" value="{context}"></label>
+<label>任务超时秒数（长文档建议 86400 即 24 小时）<input type="number" name="poll_timeout" min="3600" max="604800" value="{poll_timeout}"></label>
 <button>保存并启动</button></form><p><small>首次启动可能需要约 1 分钟。正在运行时修改设置，请先在启动终端按 Ctrl+C，再重新启动。日志位于 data/logs，关闭启动终端会停止包内服务。</small></p></html>'''
 
 
@@ -274,8 +276,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         settings = read_settings()
-        values = {key: html.escape(str(settings.get(key, '')), quote=True)
-                  for key in ('gguf', 'mmproj', 'onnx_dir', 'threads', 'context')}
+        values = {key: html.escape(str(settings.get(key, 86400 if key == 'poll_timeout' else '')), quote=True)
+                  for key in ('gguf', 'mmproj', 'onnx_dir', 'threads', 'context', 'poll_timeout')}
         body = PAGE.replace('{status}', html.escape(STATUS))
         for key, value in values.items():
             body = body.replace('{' + key + '}', value)
@@ -316,8 +318,9 @@ class Handler(BaseHTTPRequestHandler):
             settings['onnx_dir'] = form.get('onnx_dir', [''])[0].strip().strip('"')
             settings['threads'] = int(form['threads'][0])
             settings['context'] = int(form['context'][0])
-            if not 1 <= settings['threads'] <= 64 or not 4096 <= settings['context'] <= 8192:
-                raise ValueError('线程数或上下文长度超出范围')
+            settings['poll_timeout'] = int(form.get('poll_timeout', [settings.get('poll_timeout', 86400)])[0])
+            if not 1 <= settings['threads'] <= 64 or not 4096 <= settings['context'] <= 8192 or settings['poll_timeout'] < 3600:
+                raise ValueError('线程数、上下文长度或超时设置超出范围')
             resolve_models(settings)
             check_onnx(settings)
             SETTINGS.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding='utf-8')

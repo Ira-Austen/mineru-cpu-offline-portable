@@ -4,5 +4,6 @@
   "onnx_dir": "",
   "threads": 4,
   "context": 8192,
+  "poll_timeout": 86400,
   "open_browser": true
 }

@@ -44,6 +44,7 @@ UOS 模型路径例如 `/home/user/models/MinerU2.5-Pro-2605-1.2B-Q4_K_M.gguf`�
 - 默认上下文 8192，与用户现有模型的训练上下文一致；MinerU 按布局裁块识别。不要通过限制输出到 512 token 来“提速”，会截断 OCR 内容。
 - 至少 16GB 内存；运行时关闭其他占用内存的软件。实际每页耗时取决于页面内容。
 - 在本机 AMD Ryzen 5 5600X 上，以 6 线程识别四行中文、数字和英文的扫描式 PDF：Standard 约 19 秒，Advanced 约 74 秒，两者均正确识别姓名、编号与金额。这是简短测试页，不代表复杂 A4 文档或兆芯 CPU 的性能。
+- **长文档处理与超时保护**：官方 MinerU 默认轮询超时为 3600 秒（1 小时），纯 CPU 模式解析 20+ 页 PDF 时易触发 `Job did not complete within timeout` 中断。便携包内置动态补丁，默认将轮询超时放宽至 86400 秒（24 小时），并支持在设置页或 `settings.json`（`poll_timeout`）中自定义。
 - 设置保存后重启启动器生效。端口 7860/7862/8000/30000 必须未被其他程序占用。
 - 故障日志：`data/logs/vlm.log`、`api.log`、`webui.log`。
 - 自检：Windows `Start.cmd --check`；Linux `bash start.sh --check`。

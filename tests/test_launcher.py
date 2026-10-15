@@ -37,6 +37,14 @@ class PortableTests(unittest.TestCase):
                 self.assertEqual(env['MINERU_MODEL_SOURCE'], 'local')
                 self.assertEqual(env['MINERU_PORTABLE_OFFLINE'], '1')
 
+    def test_environment_configures_poll_timeout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(launcher, 'ROOT', Path(directory)):
+                env = launcher.environment({'threads': 4})
+                self.assertEqual(env['MINERU_POLL_TIMEOUT'], '86400')
+                env_custom = launcher.environment({'threads': 4, 'poll_timeout': 14400})
+                self.assertEqual(env_custom['MINERU_POLL_TIMEOUT'], '14400')
+
     def test_external_onnx_is_independent_of_writable_state(self):
         with tempfile.TemporaryDirectory(prefix='ONNX 中文 空格 ') as directory:
             root = Path(directory)

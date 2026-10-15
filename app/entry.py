@@ -5,8 +5,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / 'packages'))
 
-from model_paths import configure_model_paths
+from model_paths import configure_client_timeout, configure_model_paths
 configure_model_paths()
+configure_client_timeout()
 
 from mineru.kit.main import main
 
