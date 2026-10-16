@@ -45,6 +45,43 @@ class PortableTests(unittest.TestCase):
                 env_custom = launcher.environment({'threads': 4, 'poll_timeout': 14400})
                 self.assertEqual(env_custom['MINERU_POLL_TIMEOUT'], '14400')
 
+    def test_environment_switches_seal_cleaning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(launcher, 'ROOT', Path(directory)):
+                env = launcher.environment({'threads': 4})
+                self.assertEqual(env['MINERU_PORTABLE_SEAL_CLEAN'], '1')
+                disabled = launcher.environment({'threads': 4, 'seal_clean': False})
+                self.assertEqual(disabled['MINERU_PORTABLE_SEAL_CLEAN'], '0')
+
+    def test_seal_state_file_is_shared_with_webui(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(launcher, 'ROOT', Path(directory)):
+                self.assertIsNone(launcher.read_seal_state())
+                launcher.write_seal_state(False)
+                self.assertFalse(launcher.read_seal_state())
+                launcher.write_seal_state(True)
+                self.assertTrue(launcher.read_seal_state())
+                env = launcher.environment({'threads': 4})
+                self.assertEqual(env['MINERU_PORTABLE_SEAL_STATE'],
+                                 str(Path(directory) / 'data' / 'seal-clean.txt'))
+
+    def test_compat_page_port_and_local_key(self):
+        self.assertEqual(launcher.COMPAT_PORT, 7861)
+        self.assertIn(launcher.COMPAT_PORT, launcher.PORTS)
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(launcher, 'ROOT', Path(directory)):
+                env = launcher.environment({'threads': 4})
+                self.assertEqual(env['MINERU_API_KEY'], launcher.LOCAL_API_KEY)
+                self.assertEqual(env['MINERU_PORTABLE_API_URL'], 'http://127.0.0.1:8000')
+
+    def test_settings_page_exposes_seal_cleaning_switch(self):
+        self.assertIn('name="seal_clean"', launcher.PAGE)
+        self.assertIn('{seal_clean_checked}', launcher.PAGE)
+
+    def test_settings_page_links_to_compat_page(self):
+        self.assertIn(f'http://127.0.0.1:{launcher.COMPAT_PORT}/', launcher.PAGE)
+        self.assertIn('旧浏览器兼容页', launcher.PAGE)
+
     def test_external_onnx_is_independent_of_writable_state(self):
         with tempfile.TemporaryDirectory(prefix='ONNX 中文 空格 ') as directory:
             root = Path(directory)

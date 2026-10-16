@@ -27,7 +27,10 @@ LOCK = threading.Lock()
 STATUS = '尚未启动。'
 BUSY = False
 STOPPING = threading.Event()
-PORTS = (30000, 8000, 7860)
+PORTS = (30000, 8000, 7860, 7861)
+COMPAT_PORT = 7861
+# 仅用于本机回环的固定 key：解锁 html/docx/latex 导出，不作为安全边界。
+LOCAL_API_KEY = 'mineru-portable-local'
 WINDOWS_JOB = None
 
 
@@ -65,6 +68,29 @@ def create_windows_job():
 
 def read_settings():
     return json.loads(SETTINGS.read_text(encoding='utf-8-sig'))
+
+
+def seal_state_path():
+    """WebUI 与设置页共用的去章开关状态文件。"""
+    return ROOT / 'data' / 'seal-clean.txt'
+
+
+def read_seal_state():
+    """读取状态文件；未设置或不可读时返回 None，表示沿用 settings.json。"""
+    try:
+        return seal_state_path().read_text(encoding='utf-8').strip() != '0'
+    except OSError:
+        return None
+
+
+def write_seal_state(value):
+    """写入状态文件，让 WebUI 与设置页显示同一状态。"""
+    path = seal_state_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('1' if value else '0', encoding='utf-8')
+    except OSError:
+        pass
 
 
 def model_path(value):
@@ -127,6 +153,10 @@ def environment(settings):
         'MINERU_MODEL_BASE_DIR': str(data / 'model-state'),
         'MINERU_PORTABLE_ONNX_DIR': str(onnx_directory(settings)),
         'MINERU_POLL_TIMEOUT': str(settings.get('poll_timeout', 86400)),
+        'MINERU_PORTABLE_SEAL_CLEAN': '1' if settings.get('seal_clean', True) else '0',
+        'MINERU_PORTABLE_SEAL_STATE': str(seal_state_path()),
+        'MINERU_API_KEY': LOCAL_API_KEY,
+        'MINERU_PORTABLE_API_URL': 'http://127.0.0.1:8000',
         'MINERU_MODEL_SOURCE': 'local', 'MINERU_MODEL_SMALL_BACKEND': 'onnx',
         'MINERU_MODEL_VLM_ENGINE': 'llama-cpp', 'MINERU_TABLE_DEVICE': 'cpu',
         'MINERU_MODEL_VLM_SERVER_URL': 'http://127.0.0.1:30000',
@@ -238,15 +268,22 @@ def start_services(settings):
             STATUS = '正在启动 MinerU 文档解析服务……'
             api = spawn('api', command('api-server', '--host', '127.0.0.1', '--port', '8000',
                 '--tier', 'standard', '--concurrency', '1', '--upload-dir', ROOT / 'data' / 'uploads',
+                '--api-key', LOCAL_API_KEY,
                 '--vlm-server-url', 'http://127.0.0.1:30000',
                 '--vlm-model', 'MinerU2.5-Pro-2605', '--vlm-max-concurrency', '1',
                 '--vlm-http-timeout', '1800'), env)
             wait_ready(api, 'http://127.0.0.1:8000/v1/health')
+            STATUS = '正在启动旧浏览器兼容页……'
+            compat = spawn('compat', [sys.executable, '-s', str(ROOT / 'compat_server.py'),
+                '--host', '127.0.0.1', '--port', str(COMPAT_PORT), '--upstream', 'http://127.0.0.1:8000',
+                '--api-key', LOCAL_API_KEY, '--data-dir', str(ROOT / 'data')], env)
+            wait_ready(compat, f'http://127.0.0.1:{COMPAT_PORT}/')
             STATUS = '正在启动官方 WebUI……'
             ui = spawn('webui', command('webui', '--server-name', '127.0.0.1',
                 '--server-port', '7860', '--api-url', 'http://127.0.0.1:8000'), env)
             wait_ready(ui, 'http://127.0.0.1:7860/')
-            STATUS = '已就绪。打开 MinerU WebUI 上传文件；使用 Standard，困难页可选 Advanced。'
+            STATUS = (f'已就绪。新版浏览器用官方界面 http://127.0.0.1:7860/；'
+                      f'UOS 等旧浏览器用兼容页 http://127.0.0.1:{COMPAT_PORT}/。')
             print(STATUS, flush=True)
             if settings.get('open_browser', True):
                 webbrowser.open('http://127.0.0.1:7860/')
@@ -257,13 +294,14 @@ def start_services(settings):
 
 
 PAGE = '''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>MinerU 离线启动设置</title><style>body{font:16px system-ui;max-width:840px;margin:40px auto;padding:0 24px;background:#f7f7f7;color:#222}input{box-sizing:border-box;width:100%;padding:10px;margin:8px 0 22px;border:1px solid #bbb;border-radius:6px}button,a.button{display:inline-block;padding:12px 20px;background:#164e63;color:white;border:0;border-radius:6px;text-decoration:none}label{display:block}small{color:#555}.status{background:white;padding:18px;margin:24px 0}a{color:#164e63}</style>
+<title>MinerU 离线启动设置</title><style>body{font:16px system-ui;max-width:840px;margin:40px auto;padding:0 24px;background:#f7f7f7;color:#222}input{box-sizing:border-box;width:100%;padding:10px;margin:8px 0 22px;border:1px solid #bbb;border-radius:6px}input[type=checkbox]{width:auto;padding:0;margin:0 8px 0 0;vertical-align:middle}button,a.button{display:inline-block;padding:12px 20px;background:#164e63;color:white;border:0;border-radius:6px;text-decoration:none}label{display:block}small{color:#555}.status{background:white;padding:18px;margin:24px 0}a{color:#164e63}</style>
 <h1>MinerU 离线 CPU 包</h1><p>填写已下载的 MinerU2.5-Pro-2605 GGUF 和配套 mmproj 路径。路径可以包含中文或空格，文件留在原位置即可。</p>
-<div class="status">{status}</div><p><a class="button" href="http://127.0.0.1:7860/" target="_blank">打开 MinerU WebUI</a>　<a href="/">刷新启动状态</a></p>
+<div class="status">{status}</div><p><a class="button" href="http://127.0.0.1:7860/" target="_blank">打开 MinerU WebUI</a>　<a class="button" href="http://127.0.0.1:7861/" target="_blank">旧浏览器兼容页</a>　<a href="/">刷新启动状态</a></p>
 <form method="post" action="/stop"><button>停止本包服务并退出</button></form><br>
 <form method="post" action="/start"><label>GGUF 主模型<input name="gguf" value="{gguf}" required placeholder="E:\\models\\MinerU2.5-Pro-2605-1.2B-Q4_K_M.gguf"></label>
 <label>配套 mmproj<input name="mmproj" value="{mmproj}" required placeholder="/home/user/models/mmproj-MinerU2.5-Pro-2605-1.2B-f16.gguf"></label>
 <label>ONNX 模型目录（留空使用包内模型）<input name="onnx_dir" value="{onnx_dir}" placeholder="含 Layout、OCR、MFR、Table 的模型目录"></label>
+<label><input type="checkbox" name="seal_clean" value="1" {seal_clean_checked}> 识别前清除红色印章（推荐；红色标题与红色批注保留）</label>
 <label>CPU 线程数（5600X 建议 6；兆芯先用 4）<input type="number" name="threads" min="1" max="64" value="{threads}"></label>
 <label>上下文长度（2605 配套模型建议 8192）<input type="number" name="context" min="4096" max="8192" step="1024" value="{context}"></label>
 <label>任务超时秒数（长文档建议 86400 即 24 小时）<input type="number" name="poll_timeout" min="3600" max="604800" value="{poll_timeout}"></label>
@@ -281,6 +319,9 @@ class Handler(BaseHTTPRequestHandler):
         body = PAGE.replace('{status}', html.escape(STATUS))
         for key, value in values.items():
             body = body.replace('{' + key + '}', value)
+        state = read_seal_state()
+        checked = settings.get('seal_clean', True) if state is None else state
+        body = body.replace('{seal_clean_checked}', 'checked' if checked else '')
         body = body.encode('utf-8')
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -319,6 +360,8 @@ class Handler(BaseHTTPRequestHandler):
             settings['threads'] = int(form['threads'][0])
             settings['context'] = int(form['context'][0])
             settings['poll_timeout'] = int(form.get('poll_timeout', [settings.get('poll_timeout', 86400)])[0])
+            settings['seal_clean'] = form.get('seal_clean', [''])[0] == '1'
+            write_seal_state(settings['seal_clean'])
             if not 1 <= settings['threads'] <= 64 or not 4096 <= settings['context'] <= 8192 or settings['poll_timeout'] < 3600:
                 raise ValueError('线程数、上下文长度或超时设置超出范围')
             resolve_models(settings)
@@ -366,7 +409,8 @@ def main():
         settings['open_browser'] = False
     environment(settings)
     server = ThreadingHTTPServer(('127.0.0.1', 7862), Handler)
-    print('设置页：http://127.0.0.1:7862/；WebUI：http://127.0.0.1:7860/', flush=True)
+    print(f'设置页：http://127.0.0.1:7862/；WebUI：http://127.0.0.1:7860/；'
+          f'旧浏览器兼容页：http://127.0.0.1:{COMPAT_PORT}/', flush=True)
     global BUSY
     if settings.get('gguf') and settings.get('mmproj'):
         BUSY = True

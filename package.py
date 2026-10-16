@@ -73,7 +73,7 @@ def build(platform):
     for flavor in ('Runtime', 'Custom', 'Full'):
         name = f'MinerU-{"Windows" if platform == "windows" else "UOS20"}-x64-{flavor}'
         settings = {'gguf': '', 'mmproj': '', 'onnx_dir': '', 'threads': 6 if platform == 'windows' else 4,
-                    'context': 8192, 'poll_timeout': 86400, 'open_browser': True}
+                    'context': 8192, 'poll_timeout': 86400, 'seal_clean': True, 'open_browser': True}
         entries = list(payload)
         manifest_records = list(records)
         if flavor == 'Runtime':

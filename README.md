@@ -45,7 +45,9 @@ UOS 模型路径例如 `/home/user/models/MinerU2.5-Pro-2605-1.2B-Q4_K_M.gguf`�
 - 至少 16GB 内存；运行时关闭其他占用内存的软件。实际每页耗时取决于页面内容。
 - 在本机 AMD Ryzen 5 5600X 上，以 6 线程识别四行中文、数字和英文的扫描式 PDF：Standard 约 19 秒，Advanced 约 74 秒，两者均正确识别姓名、编号与金额。这是简短测试页，不代表复杂 A4 文档或兆芯 CPU 的性能。
 - **长文档处理与超时保护**：官方 MinerU 默认轮询超时为 3600 秒（1 小时），纯 CPU 模式解析 20+ 页 PDF 时易触发 `Job did not complete within timeout` 中断。便携包内置动态补丁，默认将轮询超时放宽至 86400 秒（24 小时），并支持在设置页或 `settings.json`（`poll_timeout`）中自定义。
-- 设置保存后重启启动器生效。端口 7860/7862/8000/30000 必须未被其他程序占用。
+- **识别前清除红色印章**：页面位图渲染完成后、进入版面与文字识别之前，先清除“约 1.2cm 见方、接近正方形”的红色印章区块，印章位置因此恢复成普通文字，不会再在结果里变成图片而打断排版。红色标题、红色批注等红字保留；印章上的文字（单位名称等）不再单独识别；很淡的印章只清掉主体笔画。官方 WebUI 左侧控制列底部有“识别前清除红色印章”勾选框，勾选或取消对后续解析立即生效、无需重启；启动设置页的同一开关与它共用 `data/seal-clean.txt` 状态。
+- **旧浏览器（UOS20 自带浏览器等）**：官方 WebUI 由 Gradio 6 构建，Chromium 80~97 内核无法完整运行（前端产物使用了 `??=`、`structuredClone`、顶层 `await import` 等新语法/接口）。便携包为此内置**旧浏览器兼容页** `http://127.0.0.1:7861/`：上传、档位、强制 OCR、页码范围、任务状态、Markdown/JSON 查看、Markdown/JSON/结构化 JSON/zip 下载、原文件预览（图片与 PDF）与去印章开关，全部不依赖新浏览器；同时官方页会注入一层兼容垫片，可修复 Chromium 89~97 上的部分组件。Chromium 80~84 请直接使用兼容页。兼容页的导出能力与官方界面一致：Markdown/JSON/结构化 JSON/zip 来自解析服务，HTML/DOCX/LaTeX/EPUB/PDF 由本地渲染器按需生成（首次点击稍慢）；EPUB/OFD/MHTML 的页面内预览仍只在官方界面提供。
+- 设置保存后重启启动器生效。端口 7860/7861/7862/8000/30000 必须未被其他程序占用。
 - 故障日志：`data/logs/vlm.log`、`api.log`、`webui.log`。
 - 自检：Windows `Start.cmd --check`；Linux `bash start.sh --check`。
 - 所有 HTTP 服务只监听 127.0.0.1。Python 子服务禁止外部 DNS 和网络连接；llama-server 使用 `--offline`。

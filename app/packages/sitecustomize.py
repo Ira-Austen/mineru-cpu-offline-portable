@@ -20,6 +20,30 @@ try:
 except Exception:
     pass
 
+# 识别前清除页面位图上的红色印章（可用 MINERU_PORTABLE_SEAL_CLEAN=0 关闭）
+try:
+    import mineru_seal_clean
+
+    mineru_seal_clean.install()
+except Exception:
+    pass
+
+# 官方 WebUI 里的"识别前清除红色印章"开关，只作用于 WebUI 进程
+try:
+    import mineru_seal_clean_ui
+
+    mineru_seal_clean_ui.install()
+except Exception:
+    pass
+
+# 官方 WebUI 的旧内核兼容垫片（Chromium 89~97 有效；更低版本请用 7861 兼容页）
+try:
+    import mineru_webui_compat
+
+    mineru_webui_compat.install()
+except Exception:
+    pass
+
 if os.environ.get('MINERU_PORTABLE_OFFLINE') == '1':
     _connect = socket.socket.connect
     _connect_ex = socket.socket.connect_ex
