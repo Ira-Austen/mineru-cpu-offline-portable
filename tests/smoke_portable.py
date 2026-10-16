@@ -84,6 +84,8 @@ def check_compat_parse(pdf_path):
         raise TimeoutError('兼容页解析未在 900 秒内完成')
     if '1234.56' not in markdown or 'CPU' not in markdown:
         raise AssertionError(f'兼容页解析结果异常：{markdown}')
+    if '7654.32' not in markdown:
+        raise AssertionError(f'兼容页解析未覆盖多页 PDF：{markdown}')
     if '<img' in markdown:
         raise AssertionError(f'兼容页结果中出现印章图片块：{markdown}')
     return {'page': True, 'seconds': round(time.monotonic() - start, 2), 'markdown': markdown}
@@ -145,9 +147,13 @@ def main():
             ImageDraw.Draw(image).text((40, 60), 'CPU OCR 1234.56',
                 fill='black', font=ImageFont.load_default(size=42))
             # 在文字上叠加一个半透明红章：去章补丁必须把红墨抹掉并保住章下文字
-            image = add_red_seal(image)
+            sealed = add_red_seal(image)
+            # 第 2 页无章：多页 PDF 必须逐页处理，这一页的文字要原样识别出来
+            second = Image.new('RGB', (800, 220), 'white')
+            ImageDraw.Draw(second).text((40, 60), 'CPU OCR 7654.32',
+                fill='black', font=ImageFont.load_default(size=42))
             pdf = root / 'data' / 'smoke-scan.pdf'
-            image.save(pdf, 'PDF', resolution=150)
+            sealed.save(pdf, 'PDF', resolution=150, save_all=True, append_images=[second])
             for tier in (['standard', 'advanced'] if args.advanced else ['standard']):
                 start = time.monotonic()
                 boundary = 'MinerUPortableSmokeBoundary'
@@ -163,6 +169,8 @@ def main():
                 markdown = result['files'][0]['content']['markdown']
                 if '1234.56' not in markdown or 'CPU' not in markdown:
                     raise AssertionError(markdown)
+                if '7654.32' not in markdown:
+                    raise AssertionError(f'多页 PDF 第 2 页未识别：{markdown}')
                 if '<img' in markdown:
                     raise AssertionError(f'印章未被清除，识别结果中出现图片块：{markdown}')
                 item = {'tier': tier, 'seconds': round(time.monotonic() - start, 2), 'markdown': markdown}

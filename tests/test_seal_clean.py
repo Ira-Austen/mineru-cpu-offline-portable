@@ -112,6 +112,20 @@ class SealCleanTests(unittest.TestCase):
         self.assertLessEqual(int(residual[SEAL_BOX].sum()), ink[SEAL_BOX].sum() * 0.05)
         self.assertTrue(residual[HEADING_BAND].any())
 
+    def test_every_page_of_a_multi_page_render_is_cleaned(self):
+        """一次渲染返回多页（多页 PDF 的页窗口）时逐页去章，无章页原样保留。"""
+        sealed, ink = synthetic_page(170)
+        sealed_page = Image.fromarray(sealed)
+        plain_page = Image.fromarray(synthetic_page(None)[0])
+        items = [{'scale': 1.0, 'img_pil': sealed_page}, {'scale': 1.0, 'img_pil': plain_page}]
+        module.clean_image_dicts(items)
+        self.assertIsNot(items[0]['img_pil'], sealed_page)
+        self.assertIs(items[1]['img_pil'], plain_page)
+        residual = module.red_mask(numpy.asarray(items[0]['img_pil']))
+        self.assertLessEqual(int(residual[SEAL_BOX].sum()), ink[SEAL_BOX].sum() * 0.05)
+        # 无章页的红标题必须原样保留
+        self.assertGreater(int(numpy.asarray(items[1]['img_pil'])[HEADING_BAND][..., 0].max()), 180)
+
     def test_cleaning_failure_keeps_original_page(self):
         original = Image.fromarray(synthetic_page(170)[0])
         with patch.object(module, 'clean_page_image', side_effect=RuntimeError('boom')):
