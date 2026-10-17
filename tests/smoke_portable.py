@@ -34,7 +34,7 @@ def add_red_seal(image):
 
 def check_seal_switch(root_url):
     """确认 WebUI 里出现"识别前清除红色印章"开关，避免界面补丁静默失效。"""
-    for path in ('/', '/gradio_api/config'):
+    for path in ('/', '/config'):
         try:
             with OPENER.open(root_url + path, timeout=10) as response:
                 body = response.read().decode('utf-8', 'ignore')

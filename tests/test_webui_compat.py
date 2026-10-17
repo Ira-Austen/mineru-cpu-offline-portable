@@ -2,6 +2,7 @@
 import importlib.util
 import re
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -86,6 +87,49 @@ class LegacyShimTests(unittest.TestCase):
         self.assertIn(compat.MARKER, demo._mineru_kit_launch_kwargs['js'])
         # 界面补丁在没有 gradio 的进程里只记录告警，不影响构建结果
         self.assertTrue(demo is not None)
+
+    def test_both_patches_apply_when_target_module_imports_later(self):
+        """回归：两个补丁登记同一个尚未导入的模块时，不能互相抢占导入钩子。
+
+        sitecustomize 先装去章开关补丁、后装兼容垫片，二者目标是同一个模块；
+        真实运行中曾因为各插一个 finder，只有后装的垫片生效，开关整个丢失。
+        """
+        ui = load_module('mineru_seal_clean_ui')
+        ui._INSTALLED = False
+        ui._WARNED.clear()
+        seal._PATCHERS.pop(compat.TARGET_MODULE, None)
+        seal._FINDERS.pop(compat.TARGET_MODULE, None)
+        saved = {name: value for name, value in sys.modules.items()
+                 if name == 'mineru' or name.startswith('mineru.')}
+        for name in saved:
+            del sys.modules[name]
+        with tempfile.TemporaryDirectory(prefix='双补丁 ') as directory:
+            root = Path(directory)
+            target = root / 'mineru' / 'kit' / 'gradio'
+            for package in (root / 'mineru', root / 'mineru' / 'kit', target):
+                package.mkdir(parents=True, exist_ok=True)
+                (package / '__init__.py').write_text('', encoding='utf-8')
+            (target / 'app.py').write_text(
+                'def build_gradio_app(*args, **kwargs):\n'
+                "    return type('Demo', (), {'_mineru_kit_launch_kwargs': {'js': '/*official*/'}})()\n",
+                encoding='utf-8')
+            sys.path.insert(0, str(root))
+            importlib.invalidate_caches()
+            try:
+                self.assertTrue(ui.install())
+                self.assertTrue(compat.install())
+                wrapped = importlib.import_module('mineru.kit.gradio.app').build_gradio_app
+                self.assertTrue(getattr(wrapped, '_mineru_portable_seal_ui', False))
+                self.assertTrue(getattr(wrapped, '_mineru_portable_legacy_shims', False))
+                self.assertIn(compat.MARKER, wrapped()._mineru_kit_launch_kwargs['js'])
+            finally:
+                sys.path.remove(str(root))
+                importlib.invalidate_caches()
+                for name in [name for name in sys.modules if name == 'mineru' or name.startswith('mineru.')]:
+                    del sys.modules[name]
+                sys.modules.update(saved)
+                seal._PATCHERS.pop(compat.TARGET_MODULE, None)
+                seal._FINDERS.pop(compat.TARGET_MODULE, None)
 
 
 if __name__ == '__main__':

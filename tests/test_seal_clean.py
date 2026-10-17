@@ -218,6 +218,36 @@ class SealCleanTests(unittest.TestCase):
                     del sys.modules[name]
                 sys.modules.update(saved)
 
+    def test_multiple_patchers_on_one_module_all_run(self):
+        """同一模块登记多个补丁时必须全部执行。
+
+        回归：早期实现给每个补丁各插一个 finder，后注册的排在 meta_path 最前面
+        抢走 loader，先登记的补丁从此静默失效——CI 上去章开关正是这样丢的。
+        """
+        module._PATCHERS.pop('patchpkg', None)
+        module._FINDERS.pop('patchpkg', None)
+        seen = []
+        with tempfile.TemporaryDirectory(prefix='多补丁 ') as directory:
+            root = Path(directory)
+            package = root / 'patchpkg'
+            package.mkdir(parents=True)
+            (package / '__init__.py').write_text('value = 0\n', encoding='utf-8')
+            sys.path.insert(0, str(root))
+            importlib.invalidate_caches()
+            try:
+                self.assertTrue(module.install_import_hook('patchpkg', lambda mod: seen.append('first') or True))
+                self.assertTrue(module.install_import_hook('patchpkg', lambda mod: seen.append('second') or True))
+                importlib.import_module('patchpkg')
+                imported = sys.modules['patchpkg']
+            finally:
+                sys.path.remove(str(root))
+                importlib.invalidate_caches()
+                sys.modules.pop('patchpkg', None)
+                module._PATCHERS.pop('patchpkg', None)
+                module._FINDERS.pop('patchpkg', None)
+        self.assertEqual(seen, ['first', 'second'])
+        self.assertEqual(imported.value, 0)
+
 
 if __name__ == '__main__':
     unittest.main()

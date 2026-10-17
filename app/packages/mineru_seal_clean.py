@@ -307,12 +307,30 @@ def _patch_module(module):
     return True
 
 
-class PatchLoader:
-    """在目标模块执行完成后立即调用补丁函数，避免无关进程提前导入重型依赖。"""
+# 同一目标模块可以登记多个补丁（去章开关与旧内核垫片都包装官方构建入口）。
+# 因此按模块名共用唯一导入钩子并依次执行；若各自插入一个 finder，后注册的
+# 那个会排在最前面抢走 loader，先登记的补丁从此永不执行。
+_PATCHERS: dict[str, list] = {}
+_FINDERS: dict[str, '_TargetFinder'] = {}
 
-    def __init__(self, inner, patcher):
+
+def apply_patchers(module_name, module):
+    """依次执行该模块登记的全部补丁；单个失败只记录，不影响其它补丁与模块导入。"""
+    applied = False
+    for patcher in list(_PATCHERS.get(module_name, ())):
+        try:
+            applied = bool(patcher(module)) or applied
+        except Exception as exc:  # 补丁失败不能让官方模块导入失败
+            _warn(f'补丁挂载失败（{module_name}）：{type(exc).__name__}: {exc}')
+    return applied
+
+
+class PatchLoader:
+    """在目标模块执行完成后应用已登记的补丁，避免无关进程提前导入重型依赖。"""
+
+    def __init__(self, inner, module_name):
         self._inner = inner
-        self._patcher = patcher
+        self._module_name = module_name
 
     def create_module(self, spec):
         create = getattr(self._inner, 'create_module', None)
@@ -320,18 +338,14 @@ class PatchLoader:
 
     def exec_module(self, module):
         self._inner.exec_module(module)
-        try:
-            self._patcher(module)
-        except Exception as exc:  # 补丁失败不能让官方模块导入失败
-            _warn(f'去章补丁挂载失败（{module.__name__}）：{type(exc).__name__}: {exc}')
+        apply_patchers(self._module_name, module)
 
 
 class _TargetFinder:
     """只在指定模块真正被导入时才介入的元路径查找器。"""
 
-    def __init__(self, module_name, patcher):
+    def __init__(self, module_name):
         self._module_name = module_name
-        self._patcher = patcher
 
     def find_spec(self, fullname, path=None, target=None):
         if fullname != self._module_name:
@@ -339,16 +353,23 @@ class _TargetFinder:
         spec = importlib.machinery.PathFinder.find_spec(fullname, path)
         if spec is None or spec.loader is None:
             return None
-        spec.loader = PatchLoader(spec.loader, self._patcher)
+        spec.loader = PatchLoader(spec.loader, self._module_name)
         return spec
 
 
 def install_import_hook(module_name, patcher):
-    """模块已导入时立即打补丁，否则挂上导入钩子；返回是否安装成功。"""
+    """登记补丁：模块已导入则立即执行，否则挂上该模块唯一的导入钩子。"""
+    patchers = _PATCHERS.setdefault(module_name, [])
+    if patcher not in patchers:
+        patchers.append(patcher)
     module = sys.modules.get(module_name)
     if module is not None:
-        return bool(patcher(module))
-    sys.meta_path.insert(0, _TargetFinder(module_name, patcher))
+        return bool(apply_patchers(module_name, module))
+    finder = _FINDERS.get(module_name)
+    if finder is None or finder not in sys.meta_path:
+        finder = _TargetFinder(module_name)
+        _FINDERS[module_name] = finder
+        sys.meta_path.insert(0, finder)
     return True
 
 
