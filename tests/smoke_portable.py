@@ -1,5 +1,6 @@
 """在解压后便携包上测试官方 WebUI 和扫描 PDF OCR，仅访问回环地址。"""
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
@@ -10,6 +11,18 @@ import urllib.request
 from pathlib import Path
 
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def local_api_key(root):
+    """读取包内 launcher 的本机固定 key，避免 smoke 与启动器两处常量漂移。
+
+    便携包给 api-server 配了固定 key（解锁官方页的高级导出格式），官方 WebUI
+    与兼容页都会带上；smoke 直连 /v1 也必须带，否则会收到 401。
+    """
+    spec = importlib.util.spec_from_file_location('portable_launcher_keys', Path(root) / 'launcher.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.LOCAL_API_KEY
 
 
 def add_red_seal(image):
@@ -154,6 +167,7 @@ def main():
                 fill='black', font=ImageFont.load_default(size=42))
             pdf = root / 'data' / 'smoke-scan.pdf'
             sealed.save(pdf, 'PDF', resolution=150, save_all=True, append_images=[second])
+            api_key = local_api_key(root)
             for tier in (['standard', 'advanced'] if args.advanced else ['standard']):
                 start = time.monotonic()
                 boundary = 'MinerUPortableSmokeBoundary'
@@ -161,7 +175,8 @@ def main():
                         'Content-Type: application/pdf\r\n\r\n').encode() + pdf.read_bytes() + f'\r\n--{boundary}--\r\n'.encode()
                 query = urllib.parse.urlencode({'tier': tier, 'ocr_mode': 'ocr', 'wait_timeout': 900})
                 req = urllib.request.Request('http://127.0.0.1:8000/v1/file_parse?' + query, data=body,
-                    headers={'Content-Type': 'multipart/form-data; boundary=' + boundary})
+                    headers={'Content-Type': 'multipart/form-data; boundary=' + boundary,
+                             'Authorization': 'Bearer ' + api_key})
                 with OPENER.open(req, timeout=930) as response:
                     result = json.load(response)
                 if result['status'] != 'completed':

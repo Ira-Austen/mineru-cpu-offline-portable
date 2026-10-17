@@ -74,6 +74,18 @@ class PortableTests(unittest.TestCase):
                 self.assertEqual(env['MINERU_API_KEY'], launcher.LOCAL_API_KEY)
                 self.assertEqual(env['MINERU_PORTABLE_API_URL'], 'http://127.0.0.1:8000')
 
+    def test_smoke_uses_the_same_local_api_key(self):
+        """smoke 直连 /v1 必须带包内固定 key，且不能和 launcher 各写一份常量。
+
+        api-server 配置了 key 后，除 /v1/health、/v1/tiers 等公共路径外都要求
+        Authorization；测试脚本漏带会整包 401（CI 曾因此失败）。
+        """
+        root = Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location('smoke_portable', root / 'tests' / 'smoke_portable.py')
+        smoke = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(smoke)
+        self.assertEqual(smoke.local_api_key(root / 'app'), launcher.LOCAL_API_KEY)
+
     def test_settings_page_exposes_seal_cleaning_switch(self):
         self.assertIn('name="seal_clean"', launcher.PAGE)
         self.assertIn('{seal_clean_checked}', launcher.PAGE)
