@@ -16,19 +16,23 @@ MinerU 的本地 DOCX 导出最后都落在固定版本的 docvortex DOCX 渲染
    （``image.load()``）；同一张图出现几次就解码几次。
 4. python-docx 保存时对整个包用 zlib 默认级别压缩，已经压过的 JPEG/PNG 被再压一遍，
    只花 CPU 换不到体积。
+5. ``add_paragraph(style=...)`` 每次都线性扫描样式表找默认样式
+   （``CT_Styles.default_for``，按样式类型遍历全部 style 元素）；580 页测试文档里
+   这一步单独占掉约四分之一的渲染时间，而样式表在渲染期间不会再变化。
 
-四项都不改变渲染语义：公式缓存命中时交出全新解析的 OMML 节点（调用方会就地把
+五项都不改变渲染语义：公式缓存命中时交出全新解析的 OMML 节点（调用方会就地把
 节点插进文档并改属性），图片缓存共享不可变的 ``PreparedImage``，DOCX 里仍是原始
-图片字节，正文、表格与公式的排版结果不变。
+图片字节，样式缓存只复用同一个查找结果，正文、表格与公式的排版结果不变。
 
 前提与代价：独占副本复用会让渲染器就地合并跨页续接列表，因此调用方不能在导出后
 继续复用同一份 MiddleJson 对象。便携包的两条导出路径（官方 WebUI 的
 ``render_download`` 与兼容页的 ``export_document``）都是每次导出现建 ParseResult，
 因此安全；其它调用方可用 ``MINERU_PORTABLE_DOCX_OWNED=0`` 关掉这一项。
 
-开关与上限：``MINERU_PORTABLE_DOCX_FAST=0`` 关闭全部补丁；公式与图片缓存条目上限用
-``MINERU_PORTABLE_DOCX_FORMULA_CACHE``、``MINERU_PORTABLE_DOCX_IMAGE_CACHE``；
-XML 压缩级别用 ``MINERU_PORTABLE_DOCX_ZIP_LEVEL``（0 为默认，沿用 python-docx 级别）。
+开关与上限：``MINERU_PORTABLE_DOCX_FAST=0`` 关闭全部补丁；公式、图片与样式查找缓存
+的条目上限用 ``MINERU_PORTABLE_DOCX_FORMULA_CACHE``、``MINERU_PORTABLE_DOCX_IMAGE_CACHE``、
+``MINERU_PORTABLE_DOCX_STYLE_CACHE``；XML 压缩级别用 ``MINERU_PORTABLE_DOCX_ZIP_LEVEL``
+（0 为默认，沿用 python-docx 级别）。
 """
 from __future__ import annotations
 
@@ -47,10 +51,12 @@ ENV_ENABLE = 'MINERU_PORTABLE_DOCX_FAST'
 ENV_OWNED = 'MINERU_PORTABLE_DOCX_OWNED'
 ENV_FORMULA_CACHE = 'MINERU_PORTABLE_DOCX_FORMULA_CACHE'
 ENV_IMAGE_CACHE = 'MINERU_PORTABLE_DOCX_IMAGE_CACHE'
+ENV_STYLE_CACHE = 'MINERU_PORTABLE_DOCX_STYLE_CACHE'
 ENV_ZIP_LEVEL = 'MINERU_PORTABLE_DOCX_ZIP_LEVEL'
 
 DEFAULT_FORMULA_CACHE = 512
 DEFAULT_IMAGE_CACHE = 64
+DEFAULT_STYLE_CACHE = 64
 #: 图片本身已压缩，原样存放只省 CPU 不亏体积；XML 仍用 python-docx 的默认级别，
 #: 想再换速度可把 ``MINERU_PORTABLE_DOCX_ZIP_LEVEL`` 设为 1（体积会略增）
 DEFAULT_ZIP_LEVEL = 0
@@ -202,6 +208,54 @@ def install_zip_compression():
     return True
 
 
+def install_style_cache():
+    """缓存默认样式解析，省掉每个段落一次的全样式表线性扫描。
+
+    ``add_paragraph(style=...)`` 会带名字去查样式 id，命中默认样式时 python-docx 用
+    ``CT_Styles.default_for`` 遍历全部 style 元素；样式表在渲染期间只读，结果可复用。
+    缓存按元素身份比对、不缓存 ``None``，并在新增样式后清空，避免把别的文档或
+    "还没有默认样式"的结果串进来。
+    """
+    from docx.oxml import styles as oxml_styles
+    from docx.styles import styles as pydocx_styles
+
+    original = oxml_styles.CT_Styles.default_for
+    if getattr(original, MARK, False):
+        return False
+    cache: dict[tuple[int, object], tuple[object, object]] = {}
+    limit = _limit(ENV_STYLE_CACHE, DEFAULT_STYLE_CACHE)
+
+    def default_for(self, style_type):
+        key = (id(self), style_type)
+        entry = cache.get(key)
+        if entry is not None and entry[0] is self:
+            return entry[1]
+        value = original(self, style_type)
+        if value is not None:
+            if limit_reached(cache, limit):
+                cache.clear()
+            cache[key] = (self, value)
+        return value
+
+    default_for.__doc__ = original.__doc__
+    setattr(default_for, MARK, True)
+    oxml_styles.CT_Styles.default_for = default_for
+
+    # 新增样式的路径很少，但一旦发生就必须让缓存失效
+    original_add_style = pydocx_styles.Styles.add_style
+    if not getattr(original_add_style, MARK, False):
+        def add_style(self, *args, **kwargs):
+            try:
+                return original_add_style(self, *args, **kwargs)
+            finally:
+                cache.clear()
+
+        add_style.__doc__ = original_add_style.__doc__
+        setattr(add_style, MARK, True)
+        pydocx_styles.Styles.add_style = add_style
+    return True
+
+
 def _owned_document(middle_json):
     """进入 docvortex 的独占文档上下文，让规划器跳过整树深拷贝。"""
     global _OWNED_CONTEXT
@@ -223,6 +277,7 @@ def prepare():
         for name, installer in (
             ('公式缓存', install_formula_cache),
             ('图片缓存', install_image_cache),
+            ('样式缓存', install_style_cache),
             ('包压缩', install_zip_compression),
         ):
             try:
@@ -273,6 +328,7 @@ __all__ = [
     'install',
     'install_formula_cache',
     'install_image_cache',
+    'install_style_cache',
     'install_zip_compression',
     'limit_reached',
     'owned_document_enabled',

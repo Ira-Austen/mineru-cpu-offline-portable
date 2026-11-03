@@ -5,6 +5,7 @@
 由 ``tests/bench_docx_export.py`` 在 CI 的独立任务里完成。
 """
 import os
+import subprocess
 import sys
 import tempfile
 import types
@@ -237,18 +238,86 @@ class ZipCompressionTests(unittest.TestCase):
             self.assertEqual(recorder.calls[1], ('word/document.xml', {}))
 
 
+class StyleCacheTests(unittest.TestCase):
+    def install(self):
+        """装上样式缓存补丁，返回被包装的样式类与调用记录。"""
+        calls = []
+        state = {'value': SimpleNamespace(name='Normal')}
+
+        class FakeStyles:
+            def default_for(self, style_type):
+                calls.append(style_type)
+                return state['value']
+
+            def add_style(self, *args, **kwargs):
+                calls.append('add_style')
+                return None
+
+        modules = fake_tree({'docx.oxml.styles': {'CT_Styles': FakeStyles},
+                             'docx.styles.styles': {'Styles': FakeStyles}})
+        self.enterContext(patched_modules(modules))
+        self.assertTrue(fast.install_style_cache())
+        self.assertFalse(fast.install_style_cache())
+        return modules['docx.oxml.styles'].CT_Styles, calls, state
+
+    def test_default_style_lookup_is_reused(self):
+        styles_class, calls, _ = self.install()
+        document = SimpleNamespace()
+        other = SimpleNamespace()
+        first = styles_class.default_for(document, 'paragraph')
+        second = styles_class.default_for(document, 'paragraph')
+        third = styles_class.default_for(document, 'character')
+        styles_class.default_for(other, 'paragraph')
+        # 同一文档同一类型只查一次；不同类型、不同文档各自算一次
+        self.assertEqual(calls, ['paragraph', 'character', 'paragraph'])
+        self.assertIs(first, second)
+        self.assertEqual(third.name, 'Normal')
+
+    def test_none_is_not_cached_and_new_style_clears_cache(self):
+        styles_class, calls, state = self.install()
+        document = SimpleNamespace()
+        styles_class.default_for(document, 'paragraph')
+        styles_class.default_for(document, 'paragraph')
+        self.assertEqual(calls, ['paragraph'])
+        # 新增样式后必须重新查询，否则会拿到过期的默认样式
+        styles_class.add_style(document, '自定义', 'paragraph')
+        styles_class.default_for(document, 'paragraph')
+        self.assertEqual(calls, ['paragraph', 'add_style', 'paragraph'])
+        # 查不到默认样式时不缓存，避免把"暂无"固化下来（换一个没有缓存条目的文档）
+        state['value'] = None
+        calls.clear()
+        fresh = SimpleNamespace()
+        self.assertIsNone(styles_class.default_for(fresh, 'paragraph'))
+        self.assertIsNone(styles_class.default_for(fresh, 'paragraph'))
+        self.assertEqual(calls, ['paragraph', 'paragraph'])
+
+
 class EntryWiringTests(unittest.TestCase):
-    def test_install_registers_lazy_hook_and_is_idempotent(self):
+    def test_install_is_idempotent_in_this_process(self):
+        """本进程可能已由 sitecustomize 装过补丁，所以只要求幂等与钩子已登记。"""
         loaded = 'docvortex.render._internal.docx.renderer' in sys.modules
-        # 测试进程若经 sitecustomize 已装过补丁，这里必须已经登记且不再重复安装
-        self.assertTrue(fast.install())
+        fast.install()
         self.assertFalse(fast.install())
-        with mock.patch.object(fast, '_INSTALLED', False):
-            self.assertTrue(fast.install())
-            self.assertFalse(fast.install())
         self.assertIn(fast.TARGET_MODULE, fast.seal._PATCHERS)
         if not loaded:
             self.assertNotIn('docvortex.render._internal.docx.renderer', sys.modules)
+
+    def test_install_in_fresh_process_takes_effect_once(self):
+        """禁用 site 的新进程里没有 sitecustomize 抢先安装，首次安装必须生效。"""
+        script = (
+            'import sys\n'
+            f'sys.path.insert(0, {str(ROOT / "app" / "packages")!r})\n'
+            'import mineru_docx_fast as fast\n'
+            'assert fast.install() is True, "首次安装应生效"\n'
+            'assert fast.install() is False, "重复安装应返回 False"\n'
+            'assert fast.TARGET_MODULE in fast.seal._PATCHERS\n'
+            'assert "docvortex.render._internal.docx.renderer" not in sys.modules, "不应提前导入渲染栈"\n'
+            'print("fresh-ok")\n'
+        )
+        # -S 跳过 site：否则 PYTHONPATH 上的 sitecustomize 会先装一次补丁
+        result = subprocess.run([sys.executable, '-S', '-c', script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('fresh-ok', result.stdout)
 
     def test_disabled_switch_skips_install(self):
         with mock.patch.object(fast, '_INSTALLED', False), mock.patch.dict(
