@@ -28,7 +28,7 @@ MinerU 的本地 DOCX 导出最后都落在固定版本的 docvortex DOCX 渲染
 
 开关与上限：``MINERU_PORTABLE_DOCX_FAST=0`` 关闭全部补丁；公式与图片缓存条目上限用
 ``MINERU_PORTABLE_DOCX_FORMULA_CACHE``、``MINERU_PORTABLE_DOCX_IMAGE_CACHE``；
-XML 压缩级别用 ``MINERU_PORTABLE_DOCX_ZIP_LEVEL``（0 表示沿用 python-docx 默认）。
+XML 压缩级别用 ``MINERU_PORTABLE_DOCX_ZIP_LEVEL``（0 为默认，沿用 python-docx 级别）。
 """
 from __future__ import annotations
 
@@ -51,8 +51,9 @@ ENV_ZIP_LEVEL = 'MINERU_PORTABLE_DOCX_ZIP_LEVEL'
 
 DEFAULT_FORMULA_CACHE = 512
 DEFAULT_IMAGE_CACHE = 64
-#: 图片本身已压缩，XML 用较低级别换速度；0 表示沿用官方默认级别
-DEFAULT_ZIP_LEVEL = 1
+#: 图片本身已压缩，原样存放只省 CPU 不亏体积；XML 仍用 python-docx 的默认级别，
+#: 想再换速度可把 ``MINERU_PORTABLE_DOCX_ZIP_LEVEL`` 设为 1（体积会略增）
+DEFAULT_ZIP_LEVEL = 0
 
 _WARNED: set[str] = set()
 _LOCK = threading.Lock()

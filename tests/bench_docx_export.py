@@ -44,14 +44,20 @@ DISPLAY_FORMULA = r'\int_{0}^{\infty} e^{-x^{2}} \, dx = \frac{\sqrt{\pi}}{2}'
 
 
 def build_images(root):
-    """生成一批可复用的 JPEG，模拟书籍里的插图与扫描页。"""
+    """生成一批可复用的 JPEG，模拟书籍里的插图与扫描页。
+
+    用随机噪声而不是纯色块：纯色 JPEG 的熵极低，zlib 还能大幅压缩，也会让 PIL
+    解码快到测不出成本，两个结论都会失真。
+    """
+    import numpy as np
     from PIL import Image
 
     images = root / 'images'
     images.mkdir(parents=True, exist_ok=True)
     for index in range(IMAGE_COUNT):
-        image = Image.new('RGB', (1200, 1600), (index * 11 % 255, 200, 60))
-        image.save(images / f'figure-{index + 1}.jpg', 'JPEG', quality=90)
+        generator = np.random.default_rng(index)
+        pixels = generator.integers(0, 256, (1600, 1200, 3), dtype=np.uint8)
+        Image.fromarray(pixels).save(images / f'figure-{index + 1}.jpg', 'JPEG', quality=85)
     return [f'images/figure-{index + 1}.jpg' for index in range(IMAGE_COUNT)]
 
 
@@ -170,8 +176,12 @@ def inspect_docx(data):
     }
 
 
-def measure(payload, assets_root, label):
-    """把一份文档重新解析并渲染一次，返回耗时与产物自检结果。"""
+def measure(payload, assets_root, label, profile=False):
+    """把一份文档重新解析并渲染一次，返回耗时与产物自检结果。
+
+    ``profile`` 打开时对渲染做一次 cProfile，并把累计耗时前 25 个函数写进报告，
+    用来确认补丁是否打在真正的热点上。
+    """
     from docvortex.render.docx import render_docx
     from docvortex.schema import MiddleJson
 
@@ -179,8 +189,23 @@ def measure(payload, assets_root, label):
     middle_json = MiddleJson.from_dict(payload)
     validate_seconds = time.perf_counter() - start
 
+    resolver = make_resolver(assets_root)
     start = time.perf_counter()
-    data = render_docx(middle_json, asset_resolver=make_resolver(assets_root))
+    if profile:
+        import cProfile
+        import pstats
+        from io import StringIO
+
+        profiler = cProfile.Profile()
+        profiler.enable()
+        data = render_docx(middle_json, asset_resolver=resolver)
+        profiler.disable()
+        stream = StringIO()
+        pstats.Stats(profiler, stream=stream).sort_stats('cumulative').print_stats(25)
+        profile_text = stream.getvalue()
+    else:
+        data = render_docx(middle_json, asset_resolver=resolver)
+        profile_text = None
     render_seconds = time.perf_counter() - start
     report = {
         'label': label,
@@ -189,7 +214,10 @@ def measure(payload, assets_root, label):
         'output_bytes': len(data),
     }
     report.update(inspect_docx(data))
-    print(json.dumps(report, ensure_ascii=False), flush=True)
+    print(json.dumps({key: value for key, value in report.items()}, ensure_ascii=False), flush=True)
+    if profile_text:
+        print(profile_text, flush=True)
+        report['profile'] = profile_text
     return report
 
 
@@ -201,6 +229,10 @@ def main():
                         help='打补丁后的渲染耗时上限（秒）')
     parser.add_argument('--min-speedup', type=float, default=1.05,
                         help='打补丁后至少要快这么多倍')
+    parser.add_argument('--max-growth', type=float, default=1.35,
+                        help='补丁后产物体积相对基线的上限倍数')
+    parser.add_argument('--profile', action='store_true',
+                        help='对基线渲染做一次 cProfile，把前 25 个热点函数写进报告')
     args = parser.parse_args()
 
     import mineru_docx_fast as docx_fast
@@ -211,7 +243,7 @@ def main():
         payload = build_payload(args.pages, image_paths)
         blocks = sum(len(page['blocks']) for page in payload['pages'])
 
-        baseline = measure(payload, assets_root, 'baseline')
+        baseline = measure(payload, assets_root, 'baseline', profile=args.profile)
         # 基线跑完后 docvortex 的 DOCX 门面已在 sys.modules 里，install 会立即挂上包装
         installed = docx_fast.install()
         applied = docx_fast.prepare()
@@ -219,6 +251,7 @@ def main():
         warm = measure(payload, assets_root, 'patched-warm')
 
     speedup = baseline['render_seconds'] / max(patched['render_seconds'], 1e-6)
+    growth = patched['output_bytes'] / max(baseline['output_bytes'], 1)
     failures = []
     if not patched['has_marker'] or not baseline['has_marker']:
         failures.append('产物缺少正文标记，渲染结果不完整')
@@ -229,6 +262,8 @@ def main():
         failures.append(f"图片成员未被原样存放：{patched['media_stored']}/{patched['media']}")
     if speedup < args.min_speedup:
         failures.append(f'加速不足：{speedup:.2f} 倍 < {args.min_speedup} 倍')
+    if growth > args.max_growth:
+        failures.append(f'产物体积增长过多：{growth:.2f} 倍 > {args.max_growth} 倍')
     if patched['render_seconds'] > args.max_seconds:
         failures.append(f"打补丁后仍用时 {patched['render_seconds']} 秒 > {args.max_seconds} 秒")
 
@@ -239,6 +274,7 @@ def main():
         'applied_patches': list(applied),
         'speedup': round(speedup, 2),
         'warm_speedup': round(baseline['render_seconds'] / max(warm['render_seconds'], 1e-6), 2),
+        'output_growth': round(growth, 2),
         'baseline': baseline,
         'patched': patched,
         'patched_warm': warm,

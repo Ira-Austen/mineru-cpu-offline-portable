@@ -185,28 +185,43 @@ class ZipCompressionTests(unittest.TestCase):
         def close(self):
             self._archive.close()
 
-    class FakeWriter:
-        """按 python-docx 1.2.0 的 _ZipPkgWriter 形态写成员。"""
+    @staticmethod
+    def make_writer_class():
+        """每次都给一个全新的写入器类，避免补丁标记在测试之间互相污染。"""
 
-        def __init__(self, archive):
-            self._zipf = archive
+        class FakeWriter:
+            """按 python-docx 1.2.0 的 _ZipPkgWriter 形态写成员。"""
 
-        def write(self, pack_uri, blob):
-            self._zipf.writestr(pack_uri.membername, blob)
+            def __init__(self, archive):
+                self._zipf = archive
+
+            def write(self, pack_uri, blob):
+                self._zipf.writestr(pack_uri.membername, blob)
+
+        return FakeWriter
+
+    def write_package(self, directory, environment):
+        """在给定环境下导出两个成员的压缩参数并返回记录。"""
+        from contextlib import nullcontext
+
+        path = Path(directory) / 'package.docx'
+        recorder = self.RecordingZip(path)
+        writer_class = self.make_writer_class()
+        writer = writer_class(recorder)
+        modules = fake_tree({'docx.opc.phys_pkg': {'_ZipPkgWriter': writer_class}})
+        context = mock.patch.dict(os.environ, environment) if environment is not None else nullcontext()
+        with patched_modules(modules), context:
+            if environment is not None and not environment:
+                os.environ.pop(fast.ENV_ZIP_LEVEL, None)
+            self.assertTrue(fast.install_zip_compression())
+            writer.write(SimpleNamespace(membername='word/media/image1.jpg'), b'\xff\xd8jpeg-bytes')
+            writer.write(SimpleNamespace(membername='word/document.xml'), b'<w:document/>' * 4)
+        recorder.close()
+        return path, recorder
 
     def test_media_stored_and_xml_uses_low_level(self):
         with tempfile.TemporaryDirectory(prefix='docx 压缩 ') as directory:
-            path = Path(directory) / 'package.docx'
-            recorder = self.RecordingZip(path)
-            writer = self.FakeWriter(recorder)
-            modules = fake_tree({'docx.opc.phys_pkg': {'_ZipPkgWriter': self.FakeWriter}})
-            with patched_modules(modules), mock.patch.dict(os.environ, {fast.ENV_ZIP_LEVEL: '1'}):
-                self.assertTrue(fast.install_zip_compression())
-                self.assertFalse(fast.install_zip_compression())
-                writer.write(SimpleNamespace(membername='word/media/image1.jpg'), b'\xff\xd8jpeg-bytes')
-                writer.write(SimpleNamespace(membername='word/document.xml'), b'<w:document/>' * 4)
-            recorder.close()
-
+            path, recorder = self.write_package(directory, {fast.ENV_ZIP_LEVEL: '1'})
             self.assertEqual(recorder.calls[0], ('word/media/image1.jpg', {'compress_type': zipfile.ZIP_STORED}))
             self.assertEqual(recorder.calls[1], ('word/document.xml', {'compresslevel': 1}))
             with zipfile.ZipFile(path) as archive:
@@ -214,16 +229,31 @@ class ZipCompressionTests(unittest.TestCase):
             self.assertEqual(types_by_name['word/media/image1.jpg'], zipfile.ZIP_STORED)
             self.assertEqual(types_by_name['word/document.xml'], zipfile.ZIP_DEFLATED)
 
+    def test_default_level_keeps_upstream_xml_compression(self):
+        """默认时图片原样存放，XML 仍按 python-docx 的默认级别压缩，体积不额外膨胀。"""
+        with tempfile.TemporaryDirectory(prefix='docx 默认 ') as directory:
+            _, recorder = self.write_package(directory, {})
+            self.assertEqual(recorder.calls[0], ('word/media/image1.jpg', {'compress_type': zipfile.ZIP_STORED}))
+            self.assertEqual(recorder.calls[1], ('word/document.xml', {}))
+
 
 class EntryWiringTests(unittest.TestCase):
     def test_install_registers_lazy_hook_and_is_idempotent(self):
         loaded = 'docvortex.render._internal.docx.renderer' in sys.modules
+        # 测试进程若经 sitecustomize 已装过补丁，这里必须已经登记且不再重复安装
         self.assertTrue(fast.install())
         self.assertFalse(fast.install())
-        # 惰性：只登记钩子，不提前导入 docvortex 的 DOCX 渲染栈
+        with mock.patch.object(fast, '_INSTALLED', False):
+            self.assertTrue(fast.install())
+            self.assertFalse(fast.install())
         self.assertIn(fast.TARGET_MODULE, fast.seal._PATCHERS)
         if not loaded:
             self.assertNotIn('docvortex.render._internal.docx.renderer', sys.modules)
+
+    def test_disabled_switch_skips_install(self):
+        with mock.patch.object(fast, '_INSTALLED', False), mock.patch.dict(
+                os.environ, {fast.ENV_ENABLE: '0'}):
+            self.assertFalse(fast.install())
 
     def test_disabled_switch_skips_patch(self):
         facade = fake_module('docvortex.render.docx', render_docx=lambda *a, **k: b'')

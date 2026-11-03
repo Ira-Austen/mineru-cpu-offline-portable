@@ -163,7 +163,7 @@ jobs:
       - name: 同一份 580 页合成文档对比补丁前后的导出耗时
         run: |
           output/bench-venv/bin/python tests/bench_docx_export.py \
-            --pages 580 --json output/docx-export-bench.json
+            --pages 580 --profile --json output/docx-export-bench.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
