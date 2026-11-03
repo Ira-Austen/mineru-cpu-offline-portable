@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -71,9 +72,13 @@ def check_compat_export(base, task_id):
     name = urllib.parse.quote('烟雾 测试.docx')
     url = f'{base}/api/export/{urllib.parse.quote(task_id, safe="")}?format=docx&name={name}'
     start = time.monotonic()
-    with OPENER.open(url, timeout=600) as response:
-        content_type = response.headers.get('Content-Type', '')
-        data = response.read()
+    try:
+        with OPENER.open(url, timeout=600) as response:
+            content_type = response.headers.get('Content-Type', '')
+            data = response.read()
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode('utf-8', 'ignore')
+        raise AssertionError(f'兼容页导出 DOCX 失败：HTTP {exc.code} {detail}') from exc
     seconds = round(time.monotonic() - start, 2)
     if 'wordprocessingml' not in content_type:
         raise AssertionError(f'兼容页导出 DOCX 的 Content-Type 异常：{content_type}')
@@ -111,7 +116,8 @@ def check_compat_parse(pdf_path):
     start = time.monotonic()
     submit = urllib.request.Request(
         base + '/api/parse', method='POST', headers={'Content-Type': 'application/json'},
-        data=json.dumps({'upload_id': upload_id, 'tier': 'standard', 'output_formats': ['markdown']}).encode('utf-8'))
+        # 不传 output_formats：与页面一致地走默认四种产物，本地导出 DOCX 需要 Middle JSON
+        data=json.dumps({'upload_id': upload_id, 'tier': 'standard'}).encode('utf-8'))
     with OPENER.open(submit, timeout=120) as response:
         task_id = json.load(response)['task_id']
 

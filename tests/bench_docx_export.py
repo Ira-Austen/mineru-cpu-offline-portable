@@ -227,8 +227,8 @@ def main():
     parser.add_argument('--json', dest='output', required=True)
     parser.add_argument('--max-seconds', type=float, default=300.0,
                         help='打补丁后的渲染耗时上限（秒）')
-    parser.add_argument('--min-speedup', type=float, default=1.05,
-                        help='打补丁后至少要快这么多倍')
+    parser.add_argument('--min-speedup', type=float, default=1.5,
+                        help='打补丁后至少要快这么多倍（当前 580 页实测约 2.7 倍，留出余量防回归）')
     parser.add_argument('--max-growth', type=float, default=1.35,
                         help='补丁后产物体积相对基线的上限倍数')
     parser.add_argument('--profile', action='store_true',
