@@ -2,14 +2,15 @@
 
 GitHub Actions 已实际构建六个离线包，并完成 Windows 与 Linux CPU 推理测试。
 
-- 成功运行：https://github.com/Ira-Austen/mineru-cpu-offline-portable/actions/runs/38288783915
-- 测试源码：`714c0df96cfd3ba059a808b3438f6309a28ce07f`
+- 最新成功运行：https://github.com/Ira-Austen/mineru-cpu-offline-portable/actions/runs/41662774726
+- 测试源码：`7166d2ca215d0f017d50ea80ab0a15f5385698aa`
 - 固定版本：MinerU 4.0.12、mineru-llama-cpp 0.1.3、Python 3.12.13。
-- `build` 与 `linux-check` 两个任务均为 `success`。
+- `build`、`linux-check` 与 `export-bench` 三个任务均为 `success`。
+- 更早的一次记录：https://github.com/Ira-Austen/mineru-cpu-offline-portable/actions/runs/38288783915（源码 `714c0df96cfd3ba059a808b3438f6309a28ce07f`）。
 
 ## 验证范围
 
-构建任务通过七个单元测试、六个归档的逐文件 SHA256 校验、159 个 Linux ELF 的 glibc 符号审计，以及 Windows 中文空格路径下的官方 WebUI 与扫描 PDF OCR。完整包测试 Standard、Advanced；Runtime 包配置已有 GGUF、mmproj、ONNX 路径后测试 Standard。
+构建任务通过 69 个单元测试、六个归档的逐文件 SHA256 校验、Linux ELF 的 glibc 符号审计，以及 Windows 中文空格路径下的官方 WebUI、扫描 PDF OCR 与兼容页 DOCX 导出。完整包测试 Standard、Advanced；Runtime 包配置已有 GGUF、mmproj、ONNX 路径后测试 Standard。
 
 Linux 测试在 Debian 10（glibc 2.28）容器内执行，使用 UID 1000、`--network none`，完整包模型目录为只读。Full 与 Runtime 的自检、官方 WebUI、实际 OCR 均通过；Runtime 使用完整包中的只读模型目录。容器仅用于 CI 测试，UOS 目标机无需 Docker 或 root。
 
@@ -52,6 +53,17 @@ docvortex 0.5.16 与 python-docx 1.2.0，不下载模型、不做推理，用同
 实测（运行 41655447556，提交 `59c7cc1`；580 页合成文档、13781 个顶层块、116 张表格、97 处图片引用）：基线 31.38 秒 → 补丁后 11.60 秒，约 2.71 倍；热缓存 11.26 秒。产物体积 14 747 751 → 14 778 438 字节（+0.2%），段落数、表格数、内联图片数与正文长度逐项一致，补丁四项（公式缓存、图片缓存、样式缓存、包压缩）全部生效。
 
 结果见 Actions 任务 `export-bench` 与产物 `docx-export-bench`（保留 14 天）。
+
+真实包上的端到端导出验证放在 `smoke_portable.py`：解析完成后从兼容页请求 DOCX，校验文件结构、可读文本与图片成员的存放方式（图片成员必须按补丁原样存放）。运行 41662774726 的结果如下；烟雾用的两页扫描件识别结果里没有图片块，因此媒体成员数为 0。
+
+| 包 | 兼容页解析 | DOCX 导出 | 产物大小 |
+| --- | ---: | ---: | ---: |
+| Windows Full | 8.78 秒 | 0.33 秒 | 37 KB |
+| Windows Runtime，外部模型 | 8.81 秒 | 0.33 秒 | 37 KB |
+| Linux Full，禁网普通用户 | 8.05 秒 | 0.21 秒 | 37 KB |
+| Linux Runtime，外部只读模型 | 8.05 秒 | 0.20 秒 | 37 KB |
+
+同一次运行的识别耗时：Windows Full Standard 11.70 秒、Advanced 235.70 秒；Windows Runtime（外部模型）Standard 12.08 秒；Linux Full Standard 10.68 秒、Advanced 240.93 秒；Linux Runtime（外部只读模型）Standard 10.54 秒。
 
 ## 未验证范围
 
