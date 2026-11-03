@@ -10,7 +10,7 @@ GitHub Actions 已实际构建六个离线包，并完成 Windows 与 Linux CPU 
 
 ## 验证范围
 
-构建任务通过 69 个单元测试、六个归档的逐文件 SHA256 校验、Linux ELF 的 glibc 符号审计，以及 Windows 中文空格路径下的官方 WebUI、扫描 PDF OCR 与兼容页 DOCX 导出。完整包测试 Standard、Advanced；Runtime 包配置已有 GGUF、mmproj、ONNX 路径后测试 Standard。
+构建任务通过 71 个单元测试、六个归档的逐文件 SHA256 校验、Linux ELF 的 glibc 符号审计，以及 Windows 中文空格路径下的官方 WebUI、扫描 PDF OCR 与兼容页 DOCX 导出。完整包测试 Standard、Advanced；Runtime 包配置已有 GGUF、mmproj、ONNX 路径后测试 Standard。
 
 Linux 测试在 Debian 10（glibc 2.28）容器内执行，使用 UID 1000、`--network none`，完整包模型目录为只读。Full 与 Runtime 的自检、官方 WebUI、实际 OCR 均通过；Runtime 使用完整包中的只读模型目录。容器仅用于 CI 测试，UOS 目标机无需 Docker 或 root。
 
