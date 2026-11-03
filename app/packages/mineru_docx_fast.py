@@ -213,8 +213,9 @@ def install_style_cache():
 
     ``add_paragraph(style=...)`` 会带名字去查样式 id，命中默认样式时 python-docx 用
     ``CT_Styles.default_for`` 遍历全部 style 元素；样式表在渲染期间只读，结果可复用。
-    缓存按元素身份比对、不缓存 ``None``，并在新增样式后清空，避免把别的文档或
-    "还没有默认样式"的结果串进来。
+    缓存按元素身份比对（``Styles`` 包装对象可能每次重建，用其 XML 元素做身份），并在
+    新增样式后清空，避免把别的文档的结果串进来。默认样式的 id 是 ``None``，正文段落
+    全走这条路径，所以这个答案也一并缓存。
     """
     from docx.oxml import styles as oxml_styles
     from docx.styles import styles as pydocx_styles
@@ -226,20 +227,43 @@ def install_style_cache():
     limit = _limit(ENV_STYLE_CACHE, DEFAULT_STYLE_CACHE)
 
     def default_for(self, style_type):
-        key = (id(self), style_type)
+        identity = self
+        key = (id(identity), style_type)
         entry = cache.get(key)
-        if entry is not None and entry[0] is self:
+        if entry is not None and entry[0] is identity:
             return entry[1]
         value = original(self, style_type)
         if value is not None:
             if limit_reached(cache, limit):
                 cache.clear()
-            cache[key] = (self, value)
+            cache[key] = (identity, value)
         return value
 
     default_for.__doc__ = original.__doc__
     setattr(default_for, MARK, True)
     oxml_styles.CT_Styles.default_for = default_for
+
+    # 按名字查样式 id 走的是 xpath 扫描整张样式表，同样可以按文档复用；
+    # Styles 包装对象可能每次重建，所以用它的 XML 元素做稳定身份
+    original_by_name = getattr(pydocx_styles.Styles, '_get_style_id_from_name', None)
+    if original_by_name is not None and not getattr(original_by_name, MARK, False):
+        def _get_style_id_from_name(self, style_name, style_type):
+            identity = getattr(self, '_element', self)
+            key = (id(identity), style_name, style_type)
+            entry = cache.get(key)
+            if entry is not None and entry[0] is identity:
+                return entry[1]
+            value = original_by_name(self, style_name, style_type)
+            # 目标样式就是该类型的默认样式时返回 None，这是稳定答案，必须一起缓存：
+            # 正文段落全都走这条路径，不缓存等于每个段落都重新扫一遍样式表
+            if limit_reached(cache, limit):
+                cache.clear()
+            cache[key] = (identity, value)
+            return value
+
+        _get_style_id_from_name.__doc__ = original_by_name.__doc__
+        setattr(_get_style_id_from_name, MARK, True)
+        pydocx_styles.Styles._get_style_id_from_name = _get_style_id_from_name
 
     # 新增样式的路径很少，但一旦发生就必须让缓存失效
     original_add_style = pydocx_styles.Styles.add_style

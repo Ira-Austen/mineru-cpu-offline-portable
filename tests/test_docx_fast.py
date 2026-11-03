@@ -242,12 +242,16 @@ class StyleCacheTests(unittest.TestCase):
     def install(self):
         """装上样式缓存补丁，返回被包装的样式类与调用记录。"""
         calls = []
-        state = {'value': SimpleNamespace(name='Normal')}
+        state = {'value': SimpleNamespace(name='Normal'), 'style_id': 'Normal'}
 
         class FakeStyles:
             def default_for(self, style_type):
                 calls.append(style_type)
                 return state['value']
+
+            def _get_style_id_from_name(self, style_name, style_type):
+                calls.append(('name', style_name, style_type))
+                return state['style_id']
 
             def add_style(self, *args, **kwargs):
                 calls.append('add_style')
@@ -259,6 +263,31 @@ class StyleCacheTests(unittest.TestCase):
         self.assertTrue(fast.install_style_cache())
         self.assertFalse(fast.install_style_cache())
         return modules['docx.oxml.styles'].CT_Styles, calls, state
+
+    def test_default_style_id_none_is_cached(self):
+        """正文样式就是默认样式，python-docx 会返回 None；这个答案也必须缓存。"""
+        styles_class, calls, state = self.install()
+        state['style_id'] = None
+        document = SimpleNamespace()
+        self.assertIsNone(styles_class._get_style_id_from_name(document, 'Normal', 'paragraph'))
+        self.assertIsNone(styles_class._get_style_id_from_name(document, 'Normal', 'paragraph'))
+        self.assertEqual(calls, [('name', 'Normal', 'paragraph')])
+        # 新增样式后缓存失效，必须重新查询
+        styles_class.add_style(document, '新样式', 'paragraph')
+        styles_class._get_style_id_from_name(document, 'Normal', 'paragraph')
+        self.assertEqual(calls, [('name', 'Normal', 'paragraph'), 'add_style', ('name', 'Normal', 'paragraph')])
+
+    def test_style_id_lookup_by_name_is_reused(self):
+        """按名字查样式 id 同样按文档缓存，重复段落不再扫样式表。"""
+        styles_class, calls, _ = self.install()
+        document = SimpleNamespace()
+        other = SimpleNamespace()
+        first = styles_class._get_style_id_from_name(document, 'Normal', 'paragraph')
+        second = styles_class._get_style_id_from_name(document, 'Normal', 'paragraph')
+        styles_class._get_style_id_from_name(other, 'Normal', 'paragraph')
+        self.assertEqual(calls, [('name', 'Normal', 'paragraph'), ('name', 'Normal', 'paragraph')])
+        self.assertEqual(first, second)
+        self.assertEqual(first, 'Normal')
 
     def test_default_style_lookup_is_reused(self):
         styles_class, calls, _ = self.install()
