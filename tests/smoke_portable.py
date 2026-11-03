@@ -1,6 +1,7 @@
 """在解压后便携包上测试官方 WebUI 和扫描 PDF OCR，仅访问回环地址。"""
 import argparse
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -8,6 +9,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+import zipfile
 from pathlib import Path
 
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -58,6 +60,39 @@ def check_seal_switch(root_url):
     raise AssertionError('WebUI 未出现"识别前清除红色印章"开关，界面补丁可能未生效')
 
 
+def check_compat_export(base, task_id):
+    """通过兼容页导出 DOCX，验证本地渲染链路端到端可用并记录耗时。
+
+    这条路径同时覆盖 DOCX 导出加速补丁：导出的包必须是合法 docx、能读出识别文本，
+    并且包内图片按补丁原样存放（不再被 zlib 二次压缩）。
+    """
+    from docx import Document
+
+    name = urllib.parse.quote('烟雾 测试.docx')
+    url = f'{base}/api/export/{urllib.parse.quote(task_id, safe="")}?format=docx&name={name}'
+    start = time.monotonic()
+    with OPENER.open(url, timeout=600) as response:
+        content_type = response.headers.get('Content-Type', '')
+        data = response.read()
+    seconds = round(time.monotonic() - start, 2)
+    if 'wordprocessingml' not in content_type:
+        raise AssertionError(f'兼容页导出 DOCX 的 Content-Type 异常：{content_type}')
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        names = archive.namelist()
+        if 'word/document.xml' not in names:
+            raise AssertionError(f'导出的 DOCX 结构异常：{names[:5]}')
+        media = [info for info in archive.infolist() if info.filename.startswith('word/media/')]
+        stored = sum(1 for info in media if info.compress_type == zipfile.ZIP_STORED)
+    text = '\n'.join(paragraph.text for paragraph in Document(io.BytesIO(data)).paragraphs)
+    # 文本可能被拆进多个 run，按去空白后的整体判断
+    compact = ''.join(text.split())
+    for expected in ('1234.56', '7654.32'):
+        if expected not in compact:
+            raise AssertionError(f'导出的 DOCX 缺少第 {expected} 项文本：{text[:200]}')
+    return {'docx_seconds': seconds, 'docx_bytes': len(data), 'docx_media': len(media),
+            'docx_media_stored': stored}
+
+
 def check_compat_parse(pdf_path):
     """通过旧浏览器兼容页真实解析一次，验证这条入口端到端可用。"""
     base = 'http://127.0.0.1:7861'
@@ -101,7 +136,9 @@ def check_compat_parse(pdf_path):
         raise AssertionError(f'兼容页解析未覆盖多页 PDF：{markdown}')
     if '<img' in markdown:
         raise AssertionError(f'兼容页结果中出现印章图片块：{markdown}')
-    return {'page': True, 'seconds': round(time.monotonic() - start, 2), 'markdown': markdown}
+    result = {'page': True, 'seconds': round(time.monotonic() - start, 2), 'markdown': markdown}
+    result.update(check_compat_export(base, task_id))
+    return result
 
 
 def main():

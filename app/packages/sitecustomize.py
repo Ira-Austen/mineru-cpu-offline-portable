@@ -44,6 +44,14 @@ try:
 except Exception:
     pass
 
+# DOCX 导出加速：跳过整树深拷贝、缓存公式与图片、避免媒体二次压缩
+try:
+    import mineru_docx_fast
+
+    mineru_docx_fast.install()
+except Exception:
+    pass
+
 if os.environ.get('MINERU_PORTABLE_OFFLINE') == '1':
     _connect = socket.socket.connect
     _connect_ex = socket.socket.connect_ex

@@ -47,6 +47,7 @@ UOS 模型路径例如 `/home/user/models/MinerU2.5-Pro-2605-1.2B-Q4_K_M.gguf`�
 - **长文档处理与超时保护**：官方 MinerU 默认轮询超时为 3600 秒（1 小时），纯 CPU 模式解析 20+ 页 PDF 时易触发 `Job did not complete within timeout` 中断。便携包内置动态补丁，默认将轮询超时放宽至 86400 秒（24 小时），并支持在设置页或 `settings.json`（`poll_timeout`）中自定义。
 - **识别前清除红色印章**：页面位图渲染完成后、进入版面与文字识别之前，先清除“约 1.2cm 见方、接近正方形”的红色印章区块，印章位置因此恢复成普通文字，不会再在结果里变成图片而打断排版。红色标题、红色批注等红字保留；印章上的文字（单位名称等）不再单独识别；很淡的印章只清掉主体笔画。官方 WebUI 左侧控制列底部有“识别前清除红色印章”勾选框，勾选或取消对后续解析立即生效、无需重启；启动设置页的同一开关与它共用 `data/seal-clean.txt` 状态。
 - **旧浏览器（UOS20 自带浏览器等）**：官方 WebUI 由 Gradio 6 构建，Chromium 80~97 内核无法完整运行（前端产物使用了 `??=`、`structuredClone`、顶层 `await import` 等新语法/接口）。便携包为此内置**旧浏览器兼容页** `http://127.0.0.1:7861/`：上传、档位、强制 OCR、页码范围、任务状态、Markdown/JSON 查看、Markdown/JSON/结构化 JSON/zip 下载、原文件预览（图片与 PDF）与去印章开关，全部不依赖新浏览器；同时官方页会注入一层兼容垫片，可修复 Chromium 89~97 上的部分组件。Chromium 80~84 请直接使用兼容页。兼容页的导出能力与官方界面一致：Markdown/JSON/结构化 JSON/zip 来自解析服务，HTML/DOCX/LaTeX/EPUB/PDF 由本地渲染器按需生成（首次点击稍慢）；EPUB/OFD/MHTML 的页面内预览仍只在官方界面提供。
+- **DOCX 导出加速**：本地导出的 HTML/DOCX/LaTeX/EPUB/PDF 由包内渲染器按需生成，长文档的 DOCX 导出原本要等很久。便携包内置补丁，跳过整份 Middle JSON 的深拷贝、缓存重复公式的 LaTeX→OMML 转换与重复图片解码，并把 DOCX 内已压缩的图片改为原样存放（不再做一次 zlib 压缩）。补丁不改变排版结果：正文、表格、公式与图片字节都和官方渲染一致，导出耗时逐次在 CI 基准任务 `export-bench` 里对比。可用 `MINERU_PORTABLE_DOCX_FAST=0` 关闭全部补丁，或用 `MINERU_PORTABLE_DOCX_OWNED=0` 只关闭深拷贝跳过（该优化会让渲染器就地合并跨页续接列表，因此导出后不要复用同一份 Middle JSON 对象；便携包两条导出路径都是每次现建，安全）。
 - 设置保存后重启启动器生效。端口 7860/7861/7862/8000/30000 必须未被其他程序占用。
 - 故障日志：`data/logs/vlm.log`、`api.log`、`webui.log`。
 - 自检：Windows `Start.cmd --check`；Linux `bash start.sh --check`。
@@ -75,7 +76,7 @@ pwsh -File ./build.ps1 -GgufDirectory 'E:/models/MinerU2.5-Pro-2605-1.2B-GGUF'
 
 工作流为 `.github/workflows/build-test.yml`。推送程序、测试、锁文件或模型清单到 main 会自动执行，也可在 Actions 页面选择“构建并测试 MinerU CPU 离线包”→“Run workflow”。
 
-构建机会获取清单中固定哈希的 GGUF，复用或获取 ONNX，然后生成六个归档。测试包括单元测试、逐文件哈希、压缩包权限、Windows 中文空格路径、官方 WebUI、Standard/Advanced 扫描 PDF OCR，以及全部外部模型路径。
+构建机会获取清单中固定哈希的 GGUF，复用或获取 ONNX，然后生成六个归档。测试包括单元测试、逐文件哈希、压缩包权限、Windows 中文空格路径、官方 WebUI、Standard/Advanced 扫描 PDF OCR、从兼容页导出 DOCX，以及全部外部模型路径。另有独立任务 `export-bench`：只装固定版本的渲染依赖，用一份 580 页合成文档对比 DOCX 导出补丁前后的耗时，并校验两次产物的段落、正文与图片完全一致。
 
 Linux 测试在 Debian 10（glibc 2.28）容器内以 UID 1000、`--network none` 运行，模型目录只读。容器只用于 CI 验证，目标 UOS 不需要 Docker。这项测试不能替代兆芯 CPU 实机验证。
 
